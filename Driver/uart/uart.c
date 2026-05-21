@@ -5,7 +5,7 @@
  * 兼容 FreeRTOS 和裸机环境
  */
 
-#include "uart.h"
+#include "Driver/uart/uart.h"
 #include <stdlib.h>
 #include <string.h>
 #include "ti_msp_dl_config.h"
@@ -163,6 +163,53 @@ static void serial_disable_tx_it(UART_Regs *uart)
 }
 
 /**
+ * @brief 结束一次发送事务
+ */
+static void serial_finish_tx(SerialHandle_t *handle)
+{
+    SendDoneCb tx_done_cb;
+
+    if (handle == NULL) {
+        return;
+    }
+
+    handle->tx_done = true;
+    handle->tx_length = 0U;
+    handle->tx_index = 0U;
+    tx_done_cb = handle->tx_done_cb;
+    handle->tx_done_cb = NULL;
+    DL_UART_disableInterrupt(handle->hardware, DL_UART_INTERRUPT_EOT_DONE);
+
+    if (handle->tx_sem) {
+        serial_sem_give(handle->tx_sem);
+    }
+
+    if (tx_done_cb) {
+        tx_done_cb(handle->param);
+    }
+}
+
+/**
+ * @brief 调用并清除本次接收完成回调
+ */
+static void serial_invoke_rx_done_cb(SerialHandle_t *handle,
+    uint8_t *data, uint16_t size)
+{
+    RecvCb rx_done_cb;
+
+    if (handle == NULL) {
+        return;
+    }
+
+    rx_done_cb = handle->recv_cb;
+    handle->recv_cb = NULL;
+
+    if (rx_done_cb) {
+        rx_done_cb(data, size, handle->param);
+    }
+}
+
+/**
  * @brief 结束一次接收事务
  */
 static void serial_finish_rx(SerialHandle_t *handle, uint16_t count)
@@ -258,6 +305,7 @@ static uint16_t serial_cancel_rx(SerialHandle_t *handle)
 
     serial_dbg_set_finish_reason(UART_DBG_RX_FINISH_CANCEL);
     serial_dbg_commit_finish(received);
+    handle->recv_cb = NULL;
 
     return received;
 }
@@ -489,7 +537,8 @@ int SerialDeinit(SerialHandle_t* handle)
 /**
  * @brief 串口发送数据
  */
-int SerialTransmit(SerialHandle_t* handle, uint8_t *data, uint16_t size)
+int SerialTransmit(SerialHandle_t* handle, uint8_t *data, uint16_t size,
+                   SendDoneCb tx_done_cb)
 {
     uint16_t i;
 
@@ -518,7 +567,7 @@ int SerialTransmit(SerialHandle_t* handle, uint8_t *data, uint16_t size)
                 size = handle->send_buffer_size;
             }
 
-            if (handle->tx_index < handle->tx_length) {
+            if (handle->tx_length > 0U) {
                 return SERIAL_ERR_BUSY;
             }
 
@@ -526,6 +575,9 @@ int SerialTransmit(SerialHandle_t* handle, uint8_t *data, uint16_t size)
             handle->tx_length = size;
             handle->tx_index = 0;
             handle->tx_done = false;
+            handle->tx_done_cb = tx_done_cb;
+            DL_UART_clearInterruptStatus(handle->hardware, DL_UART_INTERRUPT_EOT_DONE);
+            DL_UART_enableInterrupt(handle->hardware, DL_UART_INTERRUPT_EOT_DONE);
 
             /* 先把 FIFO 填到满，剩余部分交给 TX 中断继续搬运 */
             while ((handle->tx_index < handle->tx_length) &&
@@ -537,7 +589,6 @@ int SerialTransmit(SerialHandle_t* handle, uint8_t *data, uint16_t size)
             if (handle->tx_index < handle->tx_length) {
                 serial_enable_tx_it(handle->hardware);
             } else {
-                handle->tx_done = true;
                 serial_disable_tx_it(handle->hardware);
             }
             return size;
@@ -553,7 +604,8 @@ int SerialTransmit(SerialHandle_t* handle, uint8_t *data, uint16_t size)
                 return SERIAL_ERR_INVALID;
             }
 
-            if (DL_DMA_isChannelEnabled(DMA, handle->dma_tx_ch)) {
+            if ((handle->tx_length > 0U) ||
+                DL_DMA_isChannelEnabled(DMA, handle->dma_tx_ch)) {
                 return SERIAL_ERR_BUSY;
             }
             
@@ -562,6 +614,9 @@ int SerialTransmit(SerialHandle_t* handle, uint8_t *data, uint16_t size)
             handle->tx_length = size;
             handle->tx_index = size;
             handle->tx_done = false;
+            handle->tx_done_cb = tx_done_cb;
+            DL_UART_clearInterruptStatus(handle->hardware, DL_UART_INTERRUPT_EOT_DONE);
+            DL_UART_enableInterrupt(handle->hardware, DL_UART_INTERRUPT_EOT_DONE);
             
             /* 配置 DMA 源地址、目标地址和传输大小 */
             DL_DMA_setSrcAddr(DMA, handle->dma_tx_ch, (uint32_t)handle->send_buffer);
@@ -582,7 +637,8 @@ int SerialTransmit(SerialHandle_t* handle, uint8_t *data, uint16_t size)
 /**
  * @brief 流式接收 (定长数据)
  */
-int SerialReceive(SerialHandle_t* handle, uint8_t *data, uint16_t size, int timeout)
+int SerialReceive(SerialHandle_t* handle, uint8_t *data, uint16_t size,
+                  int timeout, RecvCb rx_done_cb)
 {
     uint16_t i = 0;
     TickType_t start_tick = 0;
@@ -613,21 +669,28 @@ int SerialReceive(SerialHandle_t* handle, uint8_t *data, uint16_t size, int time
                         if (handle->error_cb) {
                             handle->error_cb(SERIAL_ERR_TIMEOUT, handle->param);
                         }
+                        handle->recv_cb = NULL;
                         return (i > 0) ? i : SERIAL_ERR_TIMEOUT;
                     }
                 }
             }
+            handle->recv_cb = rx_done_cb;
+            serial_invoke_rx_done_cb(handle, data, i);
             return i;
 
         /* 中断或 DMA 模式：使用信号量同步 */
         case SERIAL_MODE_IT:
+            handle->recv_cb = rx_done_cb;
             if (serial_start_it_receive(handle, size, false) < 0) {
+                handle->recv_cb = NULL;
                 return SERIAL_ERR_INVALID;
             }
             break;
 
         case SERIAL_MODE_DMA:
+            handle->recv_cb = rx_done_cb;
             if (serial_start_dma_receive(handle, size, false) < 0) {
+                handle->recv_cb = NULL;
                 return SERIAL_ERR_INVALID;
             }
             break;
@@ -660,13 +723,15 @@ int SerialReceive(SerialHandle_t* handle, uint8_t *data, uint16_t size, int time
         handle->recv_count = size;
     }
     memcpy(data, handle->recv_buffer, handle->recv_count);
+    serial_invoke_rx_done_cb(handle, data, handle->recv_count);
     return handle->recv_count;
 }
 
 /**
  * @brief 不定长数据接收 (由硬件空闲事件判定一帧结束)
  */
-int SerialReceiveIDLE(SerialHandle_t* handle, uint8_t *data, uint16_t max_size)
+int SerialReceiveIDLE(SerialHandle_t* handle, uint8_t *data, uint16_t max_size,
+                      RecvCb rx_done_cb)
 {
     if (!handle || !data || max_size == 0) {
         return SERIAL_ERR_INVALID;
@@ -684,18 +749,24 @@ int SerialReceiveIDLE(SerialHandle_t* handle, uint8_t *data, uint16_t max_size)
             while (!DL_UART_isRXFIFOEmpty(handle->hardware) && count < max_size) {
                 data[count++] = DL_UART_receiveData(handle->hardware);
             }
+            handle->recv_cb = rx_done_cb;
+            serial_invoke_rx_done_cb(handle, data, count);
             return count;
         }
 
         /* 中断或 DMA 模式：启动接收，直到硬件空闲事件到来 */
         case SERIAL_MODE_IT:
+            handle->recv_cb = rx_done_cb;
             if (serial_start_it_receive(handle, max_size, true) < 0) {
+                handle->recv_cb = NULL;
                 return SERIAL_ERR_INVALID;
             }
             break;
 
         case SERIAL_MODE_DMA:
+            handle->recv_cb = rx_done_cb;
             if (serial_start_dma_receive(handle, max_size, true) < 0) {
+                handle->recv_cb = NULL;
                 return SERIAL_ERR_INVALID;
             }
             break;
@@ -720,11 +791,7 @@ int SerialReceiveIDLE(SerialHandle_t* handle, uint8_t *data, uint16_t max_size)
         handle->recv_count = max_size;
     }
     memcpy(data, handle->recv_buffer, handle->recv_count);
-
-    /* 调用接收回调 */
-    if (handle->recv_cb) {
-        handle->recv_cb(data, handle->recv_count, handle->param);
-    }
+    serial_invoke_rx_done_cb(handle, data, handle->recv_count);
 
     return handle->recv_count;
 }
@@ -822,12 +889,7 @@ void SerialIRQ(SerialHandle_t* handle)
                 }
 
                 if (handle->tx_index >= handle->tx_length) {
-                    handle->tx_done = true;
                     serial_disable_tx_it(handle->hardware);
-
-                    if (handle->tx_sem) {
-                        serial_sem_give(handle->tx_sem);
-                    }
                 }
                 break;
 
@@ -847,12 +909,10 @@ void SerialIRQ(SerialHandle_t* handle)
                 break;
 
             case DL_UART_MAIN_IIDX_EOT_DONE:
-                if ((handle->mode == SERIAL_MODE_DMA) &&
+                if (((handle->mode == SERIAL_MODE_DMA) ||
+                     (handle->mode == SERIAL_MODE_IT)) &&
                     (handle->tx_length > 0U)) {
-                    handle->tx_done = true;
-                    if (handle->tx_sem) {
-                        serial_sem_give(handle->tx_sem);
-                    }
+                    serial_finish_tx(handle);
                 }
                 break;
 

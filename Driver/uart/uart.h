@@ -28,6 +28,7 @@ typedef enum {
 /* 回调函数类型定义 */
 typedef void (*ErrorCb)(int err_code, void* param);
 typedef void (*RecvCb)(uint8_t *data, uint16_t size, void* param);
+typedef void (*SendDoneCb)(void* param);
 
 /* 串口句柄结构体 */
 typedef struct{
@@ -43,6 +44,7 @@ typedef struct{
     SerialMode_t mode;
     ErrorCb error_cb;
     RecvCb recv_cb;
+    SendDoneCb tx_done_cb;
     void* param;
     SemaphoreHandle_t rx_sem;   /* 接收完成信号量 */
     SemaphoreHandle_t tx_sem;   /* 发送完成信号量 */
@@ -69,9 +71,11 @@ SerialHandle_t* SerialInit(UART_Regs *hw_uart, uint8_t mode, ErrorCb error_cb, v
  * @param handle 串口句柄
  * @param data 发送数据指针
  * @param size 发送数据长度
+ * @param tx_done_cb 本次发送完成回调，仅在 IT/DMA 模式发送完成后调用一次
  * @return 发送的字节数，或错误码
  */
-int SerialTransmit(SerialHandle_t* handle, uint8_t *data, uint16_t size);
+int SerialTransmit(SerialHandle_t* handle, uint8_t *data, uint16_t size,
+                   SendDoneCb tx_done_cb);
 
 /**
  * @brief 接收定长数据 (流式接收)
@@ -79,18 +83,22 @@ int SerialTransmit(SerialHandle_t* handle, uint8_t *data, uint16_t size);
  * @param data 接收缓冲区
  * @param size 要接收的长度
  * @param timeout 超时时间 (ms)，-1 表示无限等待
+ * @param rx_done_cb 本次接收完成回调，接收成功完成后调用一次
  * @return 实际接收的字节数，或错误码
  */
-int SerialReceive(SerialHandle_t* handle, uint8_t *data, uint16_t size, int timeout);
+int SerialReceive(SerialHandle_t* handle, uint8_t *data, uint16_t size,
+                  int timeout, RecvCb rx_done_cb);
 
 /**
  * @brief 接收不定长数据 (由硬件空闲事件判定一帧结束)
  * @param handle 串口句柄
  * @param data 接收缓冲区
  * @param max_size 接收缓冲区最大长度
+ * @param rx_done_cb 本次接收完成回调，接收成功完成后调用一次
  * @return 实际接收的字节数，或错误码
  */
-int SerialReceiveIDLE(SerialHandle_t* handle, uint8_t *data, uint16_t max_size);
+int SerialReceiveIDLE(SerialHandle_t* handle, uint8_t *data, uint16_t max_size,
+                      RecvCb rx_done_cb);
 
 /**
  * @brief UART 中断处理函数 (需要在 UART ISR 中调用)

@@ -12,7 +12,7 @@
 
 /* 使用 driverlib 的 DMA 接口 */
 #include <ti/driverlib/dl_dma.h>
-#include "Driver/uart.h"
+#include "Driver/uart/uart.h"
 
 char send_buf[24];
 char recv_buf[29];
@@ -23,15 +23,26 @@ TaskHandle_t handle;
 int ret;
 
 
+int debug_rcnt;
+int debug_tcnt;
+void recv_cb(uint8_t *data, uint16_t size, void* param)
+{
+    debug_rcnt++;
+}
+
+void send_cb(void* param)
+{
+    debug_tcnt++;
+}
+
 void SerialSendTask(void*param)
 {
     while(1)
     {
-        SerialTransmit(g_serial, (uint8_t *)send_buf, 19);
+        SerialTransmit(g_serial, (uint8_t *)send_buf, 19, send_cb);
         vTaskDelay(pdMS_TO_TICKS(200));
     }
 }
-
 
 
 
@@ -50,7 +61,7 @@ int app_main()
 
     while(1)
     {
-        ret=SerialReceiveIDLE(g_serial, (uint8_t *) recv_buf, 25);
+        ret=SerialReceiveIDLE(g_serial, (uint8_t *) recv_buf, 25, recv_cb);
     }
     return 0;
 }
