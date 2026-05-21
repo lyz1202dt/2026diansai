@@ -37,7 +37,7 @@ void SerialSendTask(void*param)
 
 int app_main()
 {
-    g_serial = SerialInit(UART_0_INST, SERIAL_MODE_DMA, NULL, NULL);
+    g_serial = SerialInit(UART_0_INST,SERIAL_MODE_IT, NULL, NULL);
     SerialConfigDMA(g_serial, DMA_CH1_CHAN_ID, DMA_CH0_CHAN_ID);
     NVIC_EnableIRQ(UART_0_INST_INT_IRQN);
 

@@ -16,6 +16,55 @@
 
 #define SERIAL_DMA_CHANNEL_INVALID (0xFFU)
 
+/* ==================== 调试观测变量 ==================== */
+
+/*
+ * 如需继续使用 J-Link 观察接收过程，可把下面的 `#if 0`
+ * 改成 `#if 1` 恢复调试变量与记录逻辑。
+ */
+#if 0
+#define UART_DBG_RX_FINISH_NONE         (0U)
+#define UART_DBG_RX_FINISH_RX_FULL      (1U)
+#define UART_DBG_RX_FINISH_RX_TIMEOUT   (2U)
+#define UART_DBG_RX_FINISH_DMA_DONE_RX  (3U)
+#define UART_DBG_RX_FINISH_CANCEL       (4U)
+
+volatile uint32_t uart_dbg_irq_rx_count = 0U;
+volatile uint32_t uart_dbg_irq_rx_timeout_count = 0U;
+volatile uint32_t uart_dbg_irq_dma_done_rx_count = 0U;
+volatile uint32_t uart_dbg_irq_last_iidx = 0U;
+volatile uint32_t uart_dbg_rx_finish_reason = UART_DBG_RX_FINISH_NONE;
+volatile uint32_t uart_dbg_rx_finish_count = 0U;
+volatile uint32_t uart_dbg_rx_finish_total_count = 0U;
+volatile uint32_t uart_dbg_last_timeout_recv_count = 0U;
+volatile uint32_t uart_dbg_last_finish_input_count = 0U;
+volatile uint32_t uart_dbg_last_finish_recv_count = 0U;
+volatile uint32_t uart_dbg_idle_return_count = 0U;
+
+static uint32_t g_uart_dbg_pending_finish_reason = UART_DBG_RX_FINISH_NONE;
+
+static void serial_dbg_set_finish_reason(uint32_t reason)
+{
+    g_uart_dbg_pending_finish_reason = reason;
+}
+
+static void serial_dbg_commit_finish(uint16_t count)
+{
+    uart_dbg_last_finish_input_count = count;
+    uart_dbg_rx_finish_reason = g_uart_dbg_pending_finish_reason;
+    uart_dbg_rx_finish_count = count;
+    uart_dbg_rx_finish_total_count++;
+    g_uart_dbg_pending_finish_reason = UART_DBG_RX_FINISH_NONE;
+}
+#else
+#define UART_DBG_RX_FINISH_RX_FULL      (1U)
+#define UART_DBG_RX_FINISH_RX_TIMEOUT   (2U)
+#define UART_DBG_RX_FINISH_DMA_DONE_RX  (3U)
+#define UART_DBG_RX_FINISH_CANCEL       (4U)
+#define serial_dbg_set_finish_reason(reason) ((void) (reason))
+#define serial_dbg_commit_finish(count)      ((void) (count))
+#endif
+
 /**
  * @brief 分配内存 (兼容有无 FreeRTOS)
  */
@@ -130,8 +179,8 @@ static void serial_finish_rx(SerialHandle_t *handle, uint16_t count)
     handle->rx_done      = true;
     handle->rx_using_dma = false;
     handle->rx_wait_idle = false;
-
     serial_disable_rx_it(handle->hardware);
+    DL_UART_clearInterruptStatus(handle->hardware, DL_UART_INTERRUPT_RX_TIMEOUT_ERROR);
     /*
      * SerialReceiveIDLE 依赖 UART 硬件空闲事件判帧。
      * 在 MSPM0 driverlib 中，这个事件通过 RX_TIMEOUT_ERROR 上报，
@@ -144,6 +193,8 @@ static void serial_finish_rx(SerialHandle_t *handle, uint16_t count)
         DL_DMA_isChannelEnabled(DMA, handle->dma_rx_ch)) {
         DL_DMA_disableChannel(DMA, handle->dma_rx_ch);
     }
+
+    serial_dbg_commit_finish(count);
 
     if (handle->rx_sem) {
         serial_sem_give(handle->rx_sem);
@@ -196,6 +247,7 @@ static uint16_t serial_cancel_rx(SerialHandle_t *handle)
     handle->rx_wait_idle = false;
 
     serial_disable_rx_it(handle->hardware);
+    DL_UART_clearInterruptStatus(handle->hardware, DL_UART_INTERRUPT_RX_TIMEOUT_ERROR);
     DL_UART_disableInterrupt(handle->hardware, DL_UART_INTERRUPT_RX_TIMEOUT_ERROR);
 
     if ((handle->mode == SERIAL_MODE_DMA) &&
@@ -203,6 +255,9 @@ static uint16_t serial_cancel_rx(SerialHandle_t *handle)
         DL_DMA_isChannelEnabled(DMA, handle->dma_rx_ch)) {
         DL_DMA_disableChannel(DMA, handle->dma_rx_ch);
     }
+
+    serial_dbg_set_finish_reason(UART_DBG_RX_FINISH_CANCEL);
+    serial_dbg_commit_finish(received);
 
     return received;
 }
@@ -229,6 +284,19 @@ static int serial_start_it_receive(
     handle->rx_using_dma = false;
 
     serial_sem_reset(handle->rx_sem);
+    DL_UART_clearInterruptStatus(handle->hardware, DL_UART_INTERRUPT_RX_TIMEOUT_ERROR);
+
+    /*
+     * IDLE 判帧依赖 RX_TIMEOUT_ERROR。为了让最后一小段尾字节在
+     * 超时到来前留在 FIFO 中，需要把 RX 阈值调高，避免每来一字节
+     * 就在 RX 中断里把 FIFO 读空。
+     */
+    if (wait_idle) {
+        DL_UART_setRXFIFOThreshold(handle->hardware, DL_UART_RX_FIFO_LEVEL_1_2_FULL);
+    } else {
+        DL_UART_setRXFIFOThreshold(handle->hardware, DL_UART_RX_FIFO_LEVEL_ONE_ENTRY);
+    }
+
     serial_enable_rx_it(handle->hardware);
 
     if (wait_idle) {
@@ -271,6 +339,7 @@ static int serial_start_dma_receive(
     handle->rx_using_dma  = true;
 
     serial_sem_reset(handle->rx_sem);
+    DL_UART_clearInterruptStatus(handle->hardware, DL_UART_INTERRUPT_RX_TIMEOUT_ERROR);
     serial_disable_rx_it(handle->hardware);
 
     if (wait_idle) {
@@ -700,7 +769,9 @@ void SerialIRQ(SerialHandle_t* handle)
                  */
                 if ((handle->recv_count >= handle->recv_expected) &&
                     (handle->recv_expected > 0U)) {
+                    serial_dbg_set_finish_reason(UART_DBG_RX_FINISH_RX_FULL);
                     serial_finish_rx(handle, handle->recv_count);
+                    return;
                 }
                 break;
 
@@ -719,9 +790,27 @@ void SerialIRQ(SerialHandle_t* handle)
                         received = handle->recv_expected - remaining;
                     }
 
+                    serial_dbg_set_finish_reason(UART_DBG_RX_FINISH_RX_TIMEOUT);
                     serial_finish_rx(handle, received);
-                } else if (handle->rx_wait_idle && (handle->recv_count > 0U)) {
+                    return;
+                } else if (handle->rx_wait_idle) {
+                    /*
+                     * IT + IDLE 模式下，尾部未达到 RX FIFO 阈值的字节会
+                     * 留在 FIFO 中，等 RX_TIMEOUT_ERROR 到来后在这里一起取走。
+                     */
+                    while (!DL_UART_isRXFIFOEmpty(handle->hardware) &&
+                           (handle->recv_count < handle->recv_expected)) {
+                        handle->recv_buffer[handle->recv_count++] =
+                            DL_UART_receiveData(handle->hardware);
+                    }
+
+                    if (handle->recv_count == 0U) {
+                        break;
+                    }
+
+                    serial_dbg_set_finish_reason(UART_DBG_RX_FINISH_RX_TIMEOUT);
                     serial_finish_rx(handle, handle->recv_count);
+                    return;
                 }
                 break;
 
@@ -744,7 +833,9 @@ void SerialIRQ(SerialHandle_t* handle)
 
             case DL_UART_MAIN_IIDX_DMA_DONE_RX:
                 if (handle->rx_using_dma) {
+                    serial_dbg_set_finish_reason(UART_DBG_RX_FINISH_DMA_DONE_RX);
                     serial_finish_rx(handle, handle->recv_expected);
+                    return;
                 }
                 break;
 
