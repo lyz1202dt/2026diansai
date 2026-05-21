@@ -1,9 +1,9 @@
 #include "uartport.h"
 
-QueueHandle_t zdt_uart_send_semaphore;
-QueueHandle_t zdt_uart_receive_semaphore;
-uint8_t zdt_uart_recv_buf[128];
-uint8_t zdt_last_recv_cnt=0;
+static QueueHandle_t zdt_uart_send_semaphore;
+static QueueHandle_t zdt_uart_receive_semaphore;
+static uint8_t zdt_uart_recv_buf[128];
+static uint8_t zdt_last_recv_cnt=0;
 
 static  SerialHandle_t *zdt_serial_handle;
 
