@@ -28,8 +28,16 @@ void uart_SendCmd(uint8_t *cmd, uint32_t size)
     xSemaphoreTake(zdt_uart_send_semaphore,portMAX_DELAY);
 }
 
+void uart_recv_cb(uint8_t *data, uint16_t size, void* param)
+{
+    BaseType_t temp;
+    xSemaphoreGiveFromISR(zdt_uart_receive_semaphore,&temp);
+    portYIELD_FROM_ISR(temp);
+}
+
 void uart_Receive_Data(uint8_t *rxCmd, uint8_t *rxCount)
 {
+    SerialReceiveIDLE(zdt_serial_handle, rxCmd, 128,uart_recv_cb);
   if(xSemaphoreTake(zdt_uart_receive_semaphore,pdMS_TO_TICKS(100))!=pdPASS)
   {
     *rxCount=0;

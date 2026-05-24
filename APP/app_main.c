@@ -5,6 +5,7 @@
 
 #include <stdint.h>
 #include <string.h>
+#include "projdefs.h"
 #include "ti_msp_dl_config.h"
 #include <FreeRTOS.h>
 #include <task.h>
@@ -13,6 +14,8 @@
 /* 使用 driverlib 的 DMA 接口 */
 #include <ti/driverlib/dl_dma.h>
 #include "Driver/uart/uart.h"
+#include "Driver/zdt/uartport.h"
+#include "Driver/zdt/Emm_V5.h"
 
 char send_buf[24];
 char recv_buf[29];
@@ -20,28 +23,17 @@ static SerialHandle_t *g_serial;
 
 TaskHandle_t handle;
 
-int ret;
+int32_t exp_velocity=0;
+uint16_t dev_addr=0x01;
+uint8_t zdt_motor_buffer[64];
+uint8_t recv_count;
+
+float current_vel,current_pos;
 
 
-int debug_rcnt;
-int debug_tcnt;
-void recv_cb(uint8_t *data, uint16_t size, void* param)
+void MotorTask(void*param)
 {
-    debug_rcnt++;
-}
-
-void send_cb(void* param)
-{
-    debug_tcnt++;
-}
-
-void SerialSendTask(void*param)
-{
-    while(1)
-    {
-        SerialTransmit(g_serial, (uint8_t *)send_buf, 19, send_cb);
-        vTaskDelay(pdMS_TO_TICKS(200));
-    }
+    
 }
 
 
@@ -52,16 +44,21 @@ int app_main()
     SerialConfigDMA(g_serial, DMA_CH1_CHAN_ID, DMA_CH0_CHAN_ID);
     NVIC_EnableIRQ(UART_0_INST_INT_IRQN);
 
-    xTaskCreate(SerialSendTask, "task_name", 128, NULL, 3, & handle);
-
-    for(int i=0;i<24;i++)
-    {
-        send_buf[i]=i;
-    }
-
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    MakeZDTSerialEnv(g_serial);
+    Emm_V5_Modify_Ctrl_Mode(0x01, 1, 2);
+    vTaskDelay(pdMS_TO_TICKS(2));
+	Emm_V5_En_Control(0x01, 1, 0);
+    vTaskDelay(pdMS_TO_TICKS(2));
+    TickType_t last_wake_time=xTaskGetTickCount();
     while(1)
     {
-        ret=SerialReceiveIDLE(g_serial, (uint8_t *) recv_buf, 25, recv_cb);
+        //SerialTransmit(g_serial, (uint8_t *)send_buf, 19, send_cb);
+        Emm_V5_Read_Sys_Params(dev_addr, S_CPOS);
+        uart_Receive_Data(zdt_motor_buffer, &recv_count);
+        Emm_V5_GetPos(dev_addr,zdt_motor_buffer,&current_pos);
+        Emm_V5_Vel_Control(dev_addr, (exp_velocity>=0.0f?0:1), ABS(exp_velocity), 0, 0);
+        vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(10));
     }
     return 0;
 }

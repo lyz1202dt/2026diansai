@@ -343,33 +343,29 @@ void Emm_V5_Origin_Interrupt(uint8_t addr)
 
 
 
-uint32_t Emm_V5_GetVel(uint8_t addr,uint8_t* recv_buf,float* vel)
-{
-  if(addr!=recv_buf[0])
-    return 1;
-  if(recv_buf[1]!=0x35)
-    return 2;
-  if(recv_buf[4+3]!=0x6B)
-    return 3;
-  if(!recv_buf[2])
-      *vel=(*((uint32_t*)(recv_buf+3)))*0.1f;
-  else
-    *vel=-(*((uint32_t*)(recv_buf+3)))*0.1f;
-    return 0;
-}
-
 uint32_t Emm_V5_GetPos(uint8_t addr,uint8_t* recv_buf,float* pos)
 {
+  float pos_;
+  uint32_t pos_raw;
   if(addr!=recv_buf[0])
     return 1;
   if(recv_buf[1]!=0x36)
     return 2;
   if(recv_buf[4+3]!=0x6B)
     return 3;
-  if(!recv_buf[2])
-      *pos=(*((uint32_t*)(recv_buf+3)))*0.1f;
+  
+  pos_raw = (uint32_t)(
+                      ((uint32_t)recv_buf[3] << 24)    |
+                      ((uint32_t)recv_buf[4] << 16)    |
+                      ((uint32_t)recv_buf[5] << 8)     |
+                      ((uint32_t)recv_buf[6] << 0)
+                    );
+     pos_=(float)((int)pos_raw) * 360.0f / 65536.0f;
+
+  if(recv_buf[2])
+   *pos=-pos_;
   else
-    *pos=-(*((uint32_t*)(recv_buf+3)))*0.1f;
+    *pos=pos_;
     return 0;
 }
 

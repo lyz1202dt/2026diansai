@@ -1,7 +1,8 @@
 #ifndef __EMM_V5_H
 #define __EMM_V5_H
 
-#include "uartport.h"
+#include "Driver/uart/uart.h"
+#include "Driver/zdt/uartport.h"
 /**********************************************************
 ***	Emm_V5.0�����ջ���������
 ***	��д���ߣ�ZHANGDATOU
@@ -49,8 +50,7 @@ void Emm_V5_Origin_Trigger_Return(uint8_t addr, uint8_t o_mode, uint32_t snF); /
 void Emm_V5_Origin_Interrupt(uint8_t addr); // ǿ���жϲ��˳�����
 
 //���պ���
-void Emm_V5_Receive_Data(uint8_t *rxCmd, uint8_t *rxCount);
-uint32_t Emm_V5_GetVel(uint8_t addr,uint8_t* recv_buf,float* vel);
+//void Emm_V5_Receive_Data(uint8_t *rxCmd, uint8_t *rxCount);
 uint32_t Emm_V5_GetPos(uint8_t addr,uint8_t* recv_buf,float* pos);
 
 void Emm_V5_Pos_ControlEx(uint8_t addr,float angle,float cur_angle,float dt);
