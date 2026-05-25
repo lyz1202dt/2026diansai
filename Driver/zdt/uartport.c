@@ -36,7 +36,7 @@ void uart_Receive_Data(uint8_t *rxCmd, uint8_t *rxCount)
         return;
     }
 
-    received = SerialReceiveIDLE(zdt_serial_handle, rxCmd, 128, NULL);
+    received = SerialReceive(zdt_serial_handle, rxCmd, 8,10,NULL);
     if (received < 0) {
         *rxCount = 0;
         return;

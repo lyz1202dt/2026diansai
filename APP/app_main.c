@@ -40,12 +40,12 @@ void MotorTask(void*param)
 
 int app_main()
 {
-    g_serial = SerialInit(UART_0_INST, SERIAL_MODE_DMA, NULL, NULL);
-    if ((g_serial == NULL) ||
-        (SerialConfigDMA(g_serial, DMA_CH1_CHAN_ID, DMA_CH0_CHAN_ID) != SERIAL_OK)) {
-        return -1;
-    }
-    NVIC_EnableIRQ(UART_0_INST_INT_IRQN);
+    g_serial = SerialInit(UART_0_INST, SERIAL_MODE_POLL, NULL, NULL);
+    // if ((g_serial == NULL) ||
+    //     (SerialConfigDMA(g_serial, DMA_CH1_CHAN_ID, DMA_CH0_CHAN_ID) != SERIAL_OK)) {
+    //     return -1;
+    // }
+    // NVIC_EnableIRQ(UART_0_INST_INT_IRQN);
 
     vTaskDelay(pdMS_TO_TICKS(1000));
     MakeZDTSerialEnv(g_serial);

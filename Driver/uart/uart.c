@@ -795,7 +795,7 @@ int SerialReceiveIDLE(SerialHandle_t* handle, uint8_t *data, uint16_t max_size,
 
     return handle->recv_count;
 }
-
+int debug_irq_cnt=0;
 /**
  * @brief UART 中断处理函数
  * 应在 UART ISR 中调用此函数
