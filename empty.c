@@ -49,6 +49,8 @@
 /*
  *  ======== mainThread ========
  */
+
+ int debug_var=0;
 void *mainThread(void *arg0)
 {
     /* 1 second delay */
@@ -64,6 +66,7 @@ void *mainThread(void *arg0)
      /* Turn on user LED */
      //GPIO_write(CONFIG_GPIO_LED_0, CONFIG_LED_ON);
     int a=app_main();
+    debug_var++;
      while (1) {
         vTaskDelay(pdMS_TO_TICKS(10));
     }

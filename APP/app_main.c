@@ -40,8 +40,11 @@ void MotorTask(void*param)
 
 int app_main()
 {
-    g_serial = SerialInit(UART_0_INST,SERIAL_MODE_IT, NULL, NULL);
-    SerialConfigDMA(g_serial, DMA_CH1_CHAN_ID, DMA_CH0_CHAN_ID);
+    g_serial = SerialInit(UART_0_INST, SERIAL_MODE_DMA, NULL, NULL);
+    if ((g_serial == NULL) ||
+        (SerialConfigDMA(g_serial, DMA_CH1_CHAN_ID, DMA_CH0_CHAN_ID) != SERIAL_OK)) {
+        return -1;
+    }
     NVIC_EnableIRQ(UART_0_INST_INT_IRQN);
 
     vTaskDelay(pdMS_TO_TICKS(1000));
@@ -57,6 +60,7 @@ int app_main()
         Emm_V5_Read_Sys_Params(dev_addr, S_CPOS);
         uart_Receive_Data(zdt_motor_buffer, &recv_count);
         Emm_V5_GetPos(dev_addr,zdt_motor_buffer,&current_pos);
+        vTaskDelay(pdMS_TO_TICKS(5));
         Emm_V5_Vel_Control(dev_addr, (exp_velocity>=0.0f?0:1), ABS(exp_velocity), 0, 0);
         vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(10));
     }
