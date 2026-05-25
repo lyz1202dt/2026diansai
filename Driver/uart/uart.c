@@ -163,6 +163,33 @@ static void serial_disable_tx_it(UART_Regs *uart)
 }
 
 /**
+ * @brief 当前是否存在活跃接收事务
+ */
+static bool serial_rx_transaction_active(const SerialHandle_t *handle)
+{
+    if (handle == NULL) {
+        return false;
+    }
+
+    return (handle->recv_expected > 0U) &&
+           ((handle->rx_done == false) || handle->rx_wait_idle || handle->rx_using_dma);
+}
+
+/**
+ * @brief 读空 UART FIFO，丢弃当前残留输入
+ */
+static void serial_flush_rx_fifo(UART_Regs *uart)
+{
+    if (uart == NULL) {
+        return;
+    }
+
+    while (DL_UART_isRXFIFOEmpty(uart) == false) {
+        (void) DL_UART_receiveData(uart);
+    }
+}
+
+/**
  * @brief 结束一次发送事务
  */
 static void serial_finish_tx(SerialHandle_t *handle)
@@ -223,6 +250,7 @@ static void serial_finish_rx(SerialHandle_t *handle, uint16_t count)
     }
 
     handle->recv_count   = count;
+    handle->recv_expected = 0U;
     handle->rx_done      = true;
     handle->rx_using_dma = false;
     handle->rx_wait_idle = false;
@@ -234,6 +262,14 @@ static void serial_finish_rx(SerialHandle_t *handle, uint16_t count)
      * 这里在事务结束后关闭它，避免空闲线继续打断后续流程。
      */
     DL_UART_disableInterrupt(handle->hardware, DL_UART_INTERRUPT_RX_TIMEOUT_ERROR);
+
+    if (handle->mode == SERIAL_MODE_DMA) {
+        /*
+         * DMA 模式下在空闲期重新打开 RX 中断，用于及时丢弃
+         * “应用层没有接收但线上又来了”的无主数据。
+         */
+        serial_enable_rx_it(handle->hardware);
+    }
 
     if ((handle->mode == SERIAL_MODE_DMA) &&
         (handle->dma_rx_ch != SERIAL_DMA_CHANNEL_INVALID) &&
@@ -289,6 +325,7 @@ static uint16_t serial_cancel_rx(SerialHandle_t *handle)
     }
 
     handle->recv_count   = received;
+    handle->recv_expected = 0U;
     handle->rx_done      = true;
     handle->rx_using_dma = false;
     handle->rx_wait_idle = false;
@@ -296,6 +333,10 @@ static uint16_t serial_cancel_rx(SerialHandle_t *handle)
     serial_disable_rx_it(handle->hardware);
     DL_UART_clearInterruptStatus(handle->hardware, DL_UART_INTERRUPT_RX_TIMEOUT_ERROR);
     DL_UART_disableInterrupt(handle->hardware, DL_UART_INTERRUPT_RX_TIMEOUT_ERROR);
+
+    if (handle->mode == SERIAL_MODE_DMA) {
+        serial_enable_rx_it(handle->hardware);
+    }
 
     if ((handle->mode == SERIAL_MODE_DMA) &&
         (handle->dma_rx_ch != SERIAL_DMA_CHANNEL_INVALID) &&
@@ -323,6 +364,12 @@ static int serial_start_it_receive(
     if (size > handle->recv_buffer_size) {
         size = handle->recv_buffer_size;
     }
+
+    /*
+     * 新接收开始前先丢弃历史残留字节，避免上一次无人处理的数据
+     * 混入本次事务。
+     */
+    serial_flush_rx_fifo(handle->hardware);
 
     memset(handle->recv_buffer, 0, handle->recv_buffer_size);
     handle->recv_count   = 0;
@@ -378,6 +425,8 @@ static int serial_start_dma_receive(
     if (DL_DMA_isChannelEnabled(DMA, handle->dma_rx_ch)) {
         DL_DMA_disableChannel(DMA, handle->dma_rx_ch);
     }
+
+    serial_flush_rx_fifo(handle->hardware);
 
     memset(handle->recv_buffer, 0, handle->recv_buffer_size);
     handle->recv_count    = 0;
@@ -474,6 +523,7 @@ SerialHandle_t* SerialInit(UART_Regs *hw_uart, uint8_t mode, ErrorCb error_cb, v
 
         case SERIAL_MODE_DMA:
             DL_UART_enableInterrupt(hw_uart,
+                DL_UART_INTERRUPT_RX |
                 DL_UART_INTERRUPT_DMA_DONE_RX |
                 DL_UART_INTERRUPT_DMA_DONE_TX |
                 DL_UART_INTERRUPT_EOT_DONE |
@@ -818,6 +868,11 @@ void SerialIRQ(SerialHandle_t* handle)
            DL_UART_MAIN_IIDX_NO_INTERRUPT) {
         switch (status) {
             case DL_UART_MAIN_IIDX_RX:
+                if (!serial_rx_transaction_active(handle)) {
+                    serial_flush_rx_fifo(handle->hardware);
+                    break;
+                }
+
                 while (!DL_UART_isRXFIFOEmpty(handle->hardware)) {
                     if (handle->recv_count < handle->recv_expected) {
                         handle->recv_buffer[handle->recv_count++] =
@@ -843,6 +898,13 @@ void SerialIRQ(SerialHandle_t* handle)
                 break;
 
             case DL_UART_MAIN_IIDX_RX_TIMEOUT_ERROR:
+                if (!serial_rx_transaction_active(handle)) {
+                    DL_UART_clearInterruptStatus(handle->hardware,
+                        DL_UART_INTERRUPT_RX_TIMEOUT_ERROR);
+                    serial_flush_rx_fifo(handle->hardware);
+                    break;
+                }
+
                 /*
                  * MSPM0 driverlib 将 RX 空闲事件作为 RX_TIMEOUT_ERROR 上报。
                  * 对 SerialReceiveIDLE 来说，这里表示“本帧结束”，
@@ -959,6 +1021,7 @@ int SerialConfigDMA(SerialHandle_t* handle, uint8_t dma_tx_ch, uint8_t dma_rx_ch
         DL_UART_enableDMAReceiveEvent(handle->hardware, DL_UART_DMA_INTERRUPT_RX);
         DL_UART_setRXFIFOThreshold(handle->hardware, DL_UART_RX_FIFO_LEVEL_ONE_ENTRY);
         DL_UART_enableInterrupt(handle->hardware,
+            DL_UART_INTERRUPT_RX |
             DL_UART_INTERRUPT_DMA_DONE_RX |
             DL_UART_INTERRUPT_DMA_DONE_TX |
             DL_UART_INTERRUPT_EOT_DONE |
