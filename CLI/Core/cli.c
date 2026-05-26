@@ -1,4 +1,6 @@
 #include "CLI/Core/cli.h"
+#include <stdarg.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -28,10 +30,10 @@ static int CLIParseArgs(char *line, char **argv, int max_argc)
         return 0;
     }
 
-    token = strtok(line, " ");
+    token = strtok(line, " \t");
     while ((token != NULL) && (argc < max_argc)) {
         argv[argc++] = token;
-        token = strtok(NULL, " ");
+        token = strtok(NULL, " \t");
     }
 
     return argc;
@@ -39,30 +41,36 @@ static int CLIParseArgs(char *line, char **argv, int max_argc)
 
 void printf_cli(CLI_t* cli, const char* fmt, ...)
 {
-	va_list args;
-	int len;
+    va_list args;
+    int len;
+    int i;
 
-	if ((cli == NULL) || (fmt == NULL))
-	{
-		return;
-	}
+    if ((cli == NULL) || (fmt == NULL) || (cli->putchar == NULL)) {
+        return;
+    }
 
-	va_start(args, fmt);
-	len = vsnprintf(cli->printfBuffer, sizeof(cli->printfBuffer), fmt, args);
-	va_end(args);
+    va_start(args, fmt);
+    len = vsnprintf(cli->printfBuffer, sizeof(cli->printfBuffer), fmt, args);
+    va_end(args);
 
-	if (len <= 0)
-	{
-		return;
-	}
+    if (len <= 0) {
+        return;
+    }
 
-	if ((size_t) len >= sizeof(cli->printfBuffer))
-	{
-		len = (int) (sizeof(cli->printfBuffer) - 1);
-	}
+    if ((size_t)len >= sizeof(cli->printfBuffer)) {
+        len = (int)(sizeof(cli->printfBuffer) - 1U);
+    }
 
-    for(int i=0;i<len;i++)
+    for (i = 0; i < len; i++) {
         cli->putchar(cli->printfBuffer[i]);
+    }
+}
+
+int scanf_cli(CLI_t* cli, const char* fmt, ...)
+{
+    (void)cli;
+    (void)fmt;
+    return -1;
 }
 
 CLI_t* CLICreate()
@@ -152,6 +160,10 @@ void CLIRun(CLI_t* cli)
             continue;
         }
 
+        if (ch == '\t') {
+            ch = ' ';
+        }
+
         line_buffer[index++] = ch;
         if (cli->putchar != NULL) {
             cli->putchar(ch);
@@ -170,8 +182,9 @@ void CLIRun(CLI_t* cli)
 
     cmd = (Command_t *)ListFind(cli->cmd_list, argv[0], CLICommandMatch);
     if ((cmd == NULL) || (cmd->cmd == NULL)) {
+        printf_cli(cli, "Unknown command: %s\r\n", argv[0]);
         return;
     }
 
-    cmd->cmd(argc, argv);
+    cmd->cmd(cli, argc, argv);
 }

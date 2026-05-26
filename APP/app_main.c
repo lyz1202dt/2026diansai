@@ -1,3 +1,5 @@
+#include "CLI/App/port.h"
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
@@ -10,68 +12,27 @@
 /* 使用 driverlib 的 DMA 接口 */
 #include <ti/driverlib/dl_dma.h>
 #include "Driver/uart/uart.h"
-#include "Driver/zdt/uartport.h"
-#include "Driver/zdt/Emm_V5.h"
-#include "CLI_Port/cli_port.h"
-
-char send_buf[24];
-char recv_buf[29];
-static SerialHandle_t *g_serial;
-
-TaskHandle_t handle;
-
-int32_t exp_velocity=0;
-uint16_t dev_addr=0x01;
-uint8_t zdt_motor_buffer[64];
-uint8_t recv_count;
-
-float current_vel,current_pos;
-
-
-// void MotorTask(void*param)
-// {
-    
-// }
 
 uint8_t send_str[8]={1,2,3,4,5,6,7,8};
 uint8_t revb_str[8]={};
+static SerialHandle_t *g_serial;
 
-// int app_main()
-// {
-//     g_serial = SerialInit(UART_0_INST, SERIAL_MODE_DMA, NULL, NULL);
-//     if ((g_serial == NULL) ||
-//         (SerialConfigDMA(g_serial, DMA_CH1_CHAN_ID, DMA_CH0_CHAN_ID) != SERIAL_OK)) {
-//         return -1;
-//     }
-//     NVIC_EnableIRQ(UART_0_INST_INT_IRQN);
-    
-//     vTaskDelay(pdMS_TO_TICKS(1000));
-//     MakeZDTSerialEnv(g_serial);
-//     Emm_V5_Modify_Ctrl_Mode(0x01, 1, 2);
-//     vTaskDelay(pdMS_TO_TICKS(2));
-// 	Emm_V5_En_Control(0x01, 1, 0);
-//     vTaskDelay(pdMS_TO_TICKS(2));
-//     TickType_t last_wake_time=xTaskGetTickCount();
-//     while(1)
-//     {
-//         //SerialTransmit(g_serial, (uint8_t *)send_buf, 19, send_cb);
-//         Emm_V5_Read_Sys_Params(dev_addr, S_CPOS);
-//         uart_Receive_Data(zdt_motor_buffer, &recv_count);
-//         Emm_V5_GetPos(dev_addr,zdt_motor_buffer,&current_pos);
-//         Emm_V5_Vel_Control(dev_addr, (exp_velocity>=0.0f?0:1), ABS(exp_velocity), 0, 0);
-//         uart_Receive_Data(zdt_motor_buffer, &recv_count);
-//         vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(10));
-        
-//     }
-//     return 0;
-// }
 void send_done(void* param)
 {
 
 }
 
+void recv_done(void* param)
+{
+
+}
+
+
 int app_main()
 {
+    // if (CLI_EnvInit() != 0) {
+    //     return -1;
+    // }
     g_serial = SerialInit(UART_0_INST, SERIAL_MODE_DMA, NULL, NULL);
     if ((g_serial == NULL) ||
         (SerialConfigDMA(g_serial, DMA_CH1_CHAN_ID, DMA_CH0_CHAN_ID) != SERIAL_OK)) {
@@ -85,12 +46,6 @@ int app_main()
     // }
     SerialTransmit(g_serial, send_str, 6, send_done);
     SerialReceiveIDLE(g_serial, revb_str, sizeof(revb_str), NULL);
-    
+
     return 0;
-}
-
-
-void UART_0_INST_IRQHandler(void)
-{
-    SerialIRQ(g_serial);
 }

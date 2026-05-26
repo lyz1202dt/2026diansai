@@ -32,6 +32,7 @@ UART1.rxTimeoutValue             = 4;
 UART1.enabledInterrupts          = ["BREAK_ERROR","CTS_DONE","DMA_DONE_RX","DMA_DONE_TX","EOT_DONE","FRAMING_ERROR","NOISE_ERROR","OVERRUN_ERROR","PARITY_ERROR","RX","RXD_NEG_EDGE","RXD_POS_EDGE","RX_TIMEOUT_ERROR","TX"];
 UART1.enabledDMARXTriggers       = "DL_UART_DMA_INTERRUPT_RX";
 UART1.enabledDMATXTriggers       = "DL_UART_DMA_INTERRUPT_TX";
+UART1.enableInternalLoopback     = true;
 UART1.peripheral.rxPin.$assign   = "PA1";
 UART1.peripheral.txPin.$assign   = "PA0";
 UART1.txPinConfig.$name          = "ti_driverlib_gpio_GPIOPinGeneric0";
