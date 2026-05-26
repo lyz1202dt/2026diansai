@@ -25,6 +25,13 @@ typedef enum {
     SERIAL_ERR_ALLOC = -4
 } SerialError_t;
 
+/* HAL 风格状态定义 */
+typedef enum {
+    SERIAL_STATE_RESET = 0,
+    SERIAL_STATE_READY = 1,
+    SERIAL_STATE_BUSY  = 2
+} SerialState_t;
+
 /* 回调函数类型定义 */
 typedef void (*ErrorCb)(int err_code, void* param);
 typedef void (*RecvCb)(uint8_t *data, uint16_t size, void* param);
@@ -54,6 +61,9 @@ typedef struct{
     volatile bool rx_using_dma;
     volatile bool rx_done;
     volatile bool tx_done;
+    volatile SerialState_t gState;   /* TX / 全局发送状态 */
+    volatile SerialState_t rxState;  /* RX 状态 */
+    volatile uint32_t error_code;    /* 最近一次累计错误码 */
 } SerialHandle_t;
 
 /**

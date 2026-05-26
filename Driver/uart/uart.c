@@ -15,6 +15,14 @@
 /* ==================== 内部辅助函数 ==================== */
 
 #define SERIAL_DMA_CHANNEL_INVALID (0xFFU)
+#define SERIAL_ERROR_NONE          (0x00000000UL)
+#define SERIAL_ERROR_OVERRUN       (0x00000001UL)
+#define SERIAL_ERROR_BREAK         (0x00000002UL)
+#define SERIAL_ERROR_PARITY        (0x00000004UL)
+#define SERIAL_ERROR_FRAMING       (0x00000008UL)
+#define SERIAL_ERROR_NOISE         (0x00000010UL)
+#define SERIAL_IRQ_FIFO_BUDGET     (32U)
+#define SERIAL_IRQ_EVENT_BUDGET    (16U)
 
 /* ==================== 调试观测变量 ==================== */
 
@@ -171,8 +179,21 @@ static bool serial_rx_transaction_active(const SerialHandle_t *handle)
         return false;
     }
 
-    return (handle->recv_expected > 0U) &&
-           ((handle->rx_done == false) || handle->rx_wait_idle || handle->rx_using_dma);
+    return (handle->rxState == SERIAL_STATE_BUSY) &&
+           (handle->recv_expected > 0U);
+}
+
+/**
+ * @brief 当前是否存在活跃发送事务
+ */
+static bool serial_tx_transaction_active(const SerialHandle_t *handle)
+{
+    if (handle == NULL) {
+        return false;
+    }
+
+    return (handle->gState == SERIAL_STATE_BUSY) &&
+           (handle->tx_length > 0U);
 }
 
 /**
@@ -190,6 +211,117 @@ static void serial_flush_rx_fifo(UART_Regs *uart)
 }
 
 /**
+ * @brief 有上界地丢弃 RX FIFO 中的数据，供中断上下文使用
+ */
+static void serial_flush_rx_fifo_bounded(UART_Regs *uart, uint16_t budget)
+{
+    uint16_t flushed = 0U;
+
+    if (uart == NULL) {
+        return;
+    }
+
+    while ((flushed < budget) && (DL_UART_isRXFIFOEmpty(uart) == false)) {
+        (void) DL_UART_receiveData(uart);
+        flushed++;
+    }
+}
+
+/**
+ * @brief 把当前 FIFO 中已经到达的数据吸收到接收缓冲
+ * @return 新吸收的字节数
+ */
+static uint16_t serial_drain_rx_fifo(SerialHandle_t *handle, bool *overflow)
+{
+    uint16_t drained = 0U;
+
+    if ((handle == NULL) || (handle->hardware == NULL)) {
+        return 0U;
+    }
+
+    while (DL_UART_isRXFIFOEmpty(handle->hardware) == false) {
+        uint8_t byte = DL_UART_receiveData(handle->hardware);
+
+        if (handle->recv_count < handle->recv_expected) {
+            handle->recv_buffer[handle->recv_count++] = byte;
+            drained++;
+        } else {
+            if (overflow != NULL) {
+                *overflow = true;
+            }
+        }
+    }
+
+    return drained;
+}
+
+/**
+ * @brief 有上界地吸收 RX FIFO，供中断上下文使用
+ */
+static uint16_t serial_drain_rx_fifo_bounded(
+    SerialHandle_t *handle, bool *overflow, uint16_t budget)
+{
+    uint16_t drained = 0U;
+
+    if ((handle == NULL) || (handle->hardware == NULL)) {
+        return 0U;
+    }
+
+    while ((drained < budget) &&
+           (DL_UART_isRXFIFOEmpty(handle->hardware) == false)) {
+        uint8_t byte = DL_UART_receiveData(handle->hardware);
+
+        if (handle->recv_count < handle->recv_expected) {
+            handle->recv_buffer[handle->recv_count++] = byte;
+            drained++;
+        } else if (overflow != NULL) {
+            *overflow = true;
+        }
+    }
+
+    return drained;
+}
+
+/**
+ * @brief 有上界地向 TX FIFO 填充数据，供中断上下文使用
+ */
+static uint16_t serial_fill_tx_fifo_bounded(
+    SerialHandle_t *handle, uint16_t budget)
+{
+    uint16_t pushed = 0U;
+
+    if ((handle == NULL) || (handle->hardware == NULL)) {
+        return 0U;
+    }
+
+    while ((pushed < budget) &&
+           (handle->tx_index < handle->tx_length) &&
+           (DL_UART_isTXFIFOFull(handle->hardware) == false)) {
+        DL_UART_transmitData(handle->hardware,
+            handle->send_buffer[handle->tx_index++]);
+        pushed++;
+    }
+
+    return pushed;
+}
+
+/**
+ * @brief 根据当前事务模式配置 RX FIFO 中断阈值
+ */
+static void serial_config_rx_fifo_threshold(SerialHandle_t *handle, bool wait_idle)
+{
+    if ((handle == NULL) || (handle->hardware == NULL)) {
+        return;
+    }
+
+    if (wait_idle) {
+        DL_UART_setRXFIFOThreshold(handle->hardware, DL_UART_RX_FIFO_LEVEL_1_2_FULL);
+    } else {
+        DL_UART_setRXFIFOThreshold(handle->hardware, DL_UART_RX_FIFO_LEVEL_ONE_ENTRY);
+    }
+}
+
+/**
  * @brief 结束一次发送事务
  */
 static void serial_finish_tx(SerialHandle_t *handle)
@@ -203,8 +335,10 @@ static void serial_finish_tx(SerialHandle_t *handle)
     handle->tx_done = true;
     handle->tx_length = 0U;
     handle->tx_index = 0U;
+    handle->gState = SERIAL_STATE_READY;
     tx_done_cb = handle->tx_done_cb;
     handle->tx_done_cb = NULL;
+    serial_disable_tx_it(handle->hardware);
     DL_UART_disableInterrupt(handle->hardware, DL_UART_INTERRUPT_EOT_DONE);
 
     if (handle->tx_sem) {
@@ -237,9 +371,10 @@ static void serial_invoke_rx_done_cb(SerialHandle_t *handle,
 }
 
 /**
- * @brief 结束一次接收事务
+ * @brief 完成一次接收事务
  */
-static void serial_finish_rx(SerialHandle_t *handle, uint16_t count)
+static void serial_complete_rx(
+    SerialHandle_t *handle, uint16_t count, bool signal_waiter)
 {
     if (handle == NULL) {
         return;
@@ -254,6 +389,7 @@ static void serial_finish_rx(SerialHandle_t *handle, uint16_t count)
     handle->rx_done      = true;
     handle->rx_using_dma = false;
     handle->rx_wait_idle = false;
+    handle->rxState      = SERIAL_STATE_READY;
     serial_disable_rx_it(handle->hardware);
     DL_UART_clearInterruptStatus(handle->hardware, DL_UART_INTERRUPT_RX_TIMEOUT_ERROR);
     /*
@@ -279,9 +415,17 @@ static void serial_finish_rx(SerialHandle_t *handle, uint16_t count)
 
     serial_dbg_commit_finish(count);
 
-    if (handle->rx_sem) {
+    if (signal_waiter && (handle->rx_sem != NULL)) {
         serial_sem_give(handle->rx_sem);
     }
+}
+
+/**
+ * @brief 在中断上下文中结束一次接收事务
+ */
+static void serial_finish_rx(SerialHandle_t *handle, uint16_t count)
+{
+    serial_complete_rx(handle, count, true);
 }
 
 /**
@@ -298,9 +442,17 @@ static uint16_t serial_get_received_count(SerialHandle_t *handle)
     if (handle->rx_using_dma &&
         (handle->dma_rx_ch != SERIAL_DMA_CHANNEL_INVALID)) {
         uint16_t remaining = DL_DMA_getTransferSize(DMA, handle->dma_rx_ch);
+        uint16_t dma_expected = handle->recv_expected;
 
-        if (remaining < handle->recv_expected) {
-            received = handle->recv_expected - remaining;
+        if (handle->recv_count < dma_expected) {
+            dma_expected -= handle->recv_count;
+        } else {
+            dma_expected = 0U;
+        }
+
+        received = handle->recv_count;
+        if (remaining < dma_expected) {
+            received += (uint16_t) (dma_expected - remaining);
         }
     } else {
         received = handle->recv_count;
@@ -325,27 +477,8 @@ static uint16_t serial_cancel_rx(SerialHandle_t *handle)
     }
 
     handle->recv_count   = received;
-    handle->recv_expected = 0U;
-    handle->rx_done      = true;
-    handle->rx_using_dma = false;
-    handle->rx_wait_idle = false;
-
-    serial_disable_rx_it(handle->hardware);
-    DL_UART_clearInterruptStatus(handle->hardware, DL_UART_INTERRUPT_RX_TIMEOUT_ERROR);
-    DL_UART_disableInterrupt(handle->hardware, DL_UART_INTERRUPT_RX_TIMEOUT_ERROR);
-
-    if (handle->mode == SERIAL_MODE_DMA) {
-        serial_enable_rx_it(handle->hardware);
-    }
-
-    if ((handle->mode == SERIAL_MODE_DMA) &&
-        (handle->dma_rx_ch != SERIAL_DMA_CHANNEL_INVALID) &&
-        DL_DMA_isChannelEnabled(DMA, handle->dma_rx_ch)) {
-        DL_DMA_disableChannel(DMA, handle->dma_rx_ch);
-    }
-
     serial_dbg_set_finish_reason(UART_DBG_RX_FINISH_CANCEL);
-    serial_dbg_commit_finish(received);
+    serial_complete_rx(handle, received, false);
     handle->recv_cb = NULL;
 
     return received;
@@ -357,40 +490,30 @@ static uint16_t serial_cancel_rx(SerialHandle_t *handle)
 static int serial_start_it_receive(
     SerialHandle_t *handle, uint16_t size, bool wait_idle)
 {
+    bool overflow = false;
+
     if ((handle == NULL) || (size == 0U)) {
         return SERIAL_ERR_INVALID;
+    }
+
+    if (serial_rx_transaction_active(handle)) {
+        return SERIAL_ERR_BUSY;
     }
 
     if (size > handle->recv_buffer_size) {
         size = handle->recv_buffer_size;
     }
 
-    /*
-     * 新接收开始前先丢弃历史残留字节，避免上一次无人处理的数据
-     * 混入本次事务。
-     */
-    serial_flush_rx_fifo(handle->hardware);
-
-    memset(handle->recv_buffer, 0, handle->recv_buffer_size);
     handle->recv_count   = 0;
     handle->recv_expected = size;
     handle->rx_done      = false;
     handle->rx_wait_idle = wait_idle;
     handle->rx_using_dma = false;
+    handle->rxState      = SERIAL_STATE_BUSY;
 
     serial_sem_reset(handle->rx_sem);
     DL_UART_clearInterruptStatus(handle->hardware, DL_UART_INTERRUPT_RX_TIMEOUT_ERROR);
-
-    /*
-     * IDLE 判帧依赖 RX_TIMEOUT_ERROR。为了让最后一小段尾字节在
-     * 超时到来前留在 FIFO 中，需要把 RX 阈值调高，避免每来一字节
-     * 就在 RX 中断里把 FIFO 读空。
-     */
-    if (wait_idle) {
-        DL_UART_setRXFIFOThreshold(handle->hardware, DL_UART_RX_FIFO_LEVEL_1_2_FULL);
-    } else {
-        DL_UART_setRXFIFOThreshold(handle->hardware, DL_UART_RX_FIFO_LEVEL_ONE_ENTRY);
-    }
+    serial_config_rx_fifo_threshold(handle, wait_idle);
 
     serial_enable_rx_it(handle->hardware);
 
@@ -404,6 +527,17 @@ static int serial_start_it_receive(
         DL_UART_disableInterrupt(handle->hardware, DL_UART_INTERRUPT_RX_TIMEOUT_ERROR);
     }
 
+    (void) serial_drain_rx_fifo(handle, &overflow);
+    if (overflow && (handle->error_cb != NULL)) {
+        handle->error_code |= SERIAL_ERROR_OVERRUN;
+        handle->error_cb(SERIAL_ERR_BUSY, handle->param);
+    }
+
+    if (handle->recv_count >= handle->recv_expected) {
+        serial_dbg_set_finish_reason(UART_DBG_RX_FINISH_RX_FULL);
+        serial_complete_rx(handle, handle->recv_count, false);
+    }
+
     return (int) size;
 }
 
@@ -413,9 +547,17 @@ static int serial_start_it_receive(
 static int serial_start_dma_receive(
     SerialHandle_t *handle, uint16_t size, bool wait_idle)
 {
+    bool overflow = false;
+    uint16_t preloaded;
+    uint16_t dma_size;
+
     if ((handle == NULL) || (size == 0U) ||
         (handle->dma_rx_ch == SERIAL_DMA_CHANNEL_INVALID)) {
         return SERIAL_ERR_INVALID;
+    }
+
+    if (serial_rx_transaction_active(handle)) {
+        return SERIAL_ERR_BUSY;
     }
 
     if (size > handle->recv_buffer_size) {
@@ -426,18 +568,17 @@ static int serial_start_dma_receive(
         DL_DMA_disableChannel(DMA, handle->dma_rx_ch);
     }
 
-    serial_flush_rx_fifo(handle->hardware);
-
-    memset(handle->recv_buffer, 0, handle->recv_buffer_size);
     handle->recv_count    = 0;
     handle->recv_expected = size;
     handle->rx_done       = false;
     handle->rx_wait_idle  = wait_idle;
     handle->rx_using_dma  = true;
+    handle->rxState       = SERIAL_STATE_BUSY;
 
     serial_sem_reset(handle->rx_sem);
     DL_UART_clearInterruptStatus(handle->hardware, DL_UART_INTERRUPT_RX_TIMEOUT_ERROR);
     serial_disable_rx_it(handle->hardware);
+    serial_config_rx_fifo_threshold(handle, wait_idle);
 
     if (wait_idle) {
         /*
@@ -448,9 +589,23 @@ static int serial_start_dma_receive(
         DL_UART_disableInterrupt(handle->hardware, DL_UART_INTERRUPT_RX_TIMEOUT_ERROR);
     }
 
+    preloaded = serial_drain_rx_fifo(handle, &overflow);
+    if (overflow && (handle->error_cb != NULL)) {
+        handle->error_code |= SERIAL_ERROR_OVERRUN;
+        handle->error_cb(SERIAL_ERR_BUSY, handle->param);
+    }
+
+    if (handle->recv_count >= handle->recv_expected) {
+        serial_dbg_set_finish_reason(UART_DBG_RX_FINISH_RX_FULL);
+        serial_complete_rx(handle, handle->recv_count, false);
+        return (int) size;
+    }
+
+    dma_size = (uint16_t) (size - preloaded);
     DL_DMA_setSrcAddr(DMA, handle->dma_rx_ch, (uint32_t) (&handle->hardware->RXDATA));
-    DL_DMA_setDestAddr(DMA, handle->dma_rx_ch, (uint32_t) handle->recv_buffer);
-    DL_DMA_setTransferSize(DMA, handle->dma_rx_ch, size);
+    DL_DMA_setDestAddr(DMA, handle->dma_rx_ch,
+        (uint32_t) (handle->recv_buffer + preloaded));
+    DL_DMA_setTransferSize(DMA, handle->dma_rx_ch, dma_size);
     DL_DMA_enableChannel(DMA, handle->dma_rx_ch);
 
     return (int) size;
@@ -482,8 +637,11 @@ SerialHandle_t* SerialInit(UART_Regs *hw_uart, uint8_t mode, ErrorCb error_cb, v
     handle->param = param;
     handle->dma_rx_ch = SERIAL_DMA_CHANNEL_INVALID;
     handle->dma_tx_ch = SERIAL_DMA_CHANNEL_INVALID;
-    handle->rx_done = false;
-    handle->tx_done = false;
+    handle->rx_done = true;
+    handle->tx_done = true;
+    handle->gState = SERIAL_STATE_READY;
+    handle->rxState = SERIAL_STATE_READY;
+    handle->error_code = SERIAL_ERROR_NONE;
 
     /* 分配发送缓冲区 (默认 256 字节) */
     handle->send_buffer_size = 256;
@@ -517,8 +675,8 @@ SerialHandle_t* SerialInit(UART_Regs *hw_uart, uint8_t mode, ErrorCb error_cb, v
     /* 根据模式配置 */
     switch (mode) {
         case SERIAL_MODE_IT:
-            /* 中断模式：启用 RX 中断 */
-            serial_enable_rx_it(hw_uart);
+            /* 中断模式：仅在真正开始接收事务时打开 RX 中断 */
+            serial_disable_rx_it(hw_uart);
             break;
 
         case SERIAL_MODE_DMA:
@@ -558,6 +716,11 @@ int SerialDeinit(SerialHandle_t* handle)
     if (handle->hardware) {
         serial_disable_rx_it(handle->hardware);
         serial_disable_tx_it(handle->hardware);
+        DL_UART_disableInterrupt(handle->hardware,
+            DL_UART_INTERRUPT_EOT_DONE |
+            DL_UART_INTERRUPT_RX_TIMEOUT_ERROR |
+            DL_UART_INTERRUPT_DMA_DONE_RX |
+            DL_UART_INTERRUPT_DMA_DONE_TX);
     }
 
     /* 释放缓冲区 */
@@ -617,14 +780,16 @@ int SerialTransmit(SerialHandle_t* handle, uint8_t *data, uint16_t size,
                 size = handle->send_buffer_size;
             }
 
-            if (handle->tx_length > 0U) {
+            if (serial_tx_transaction_active(handle)) {
                 return SERIAL_ERR_BUSY;
             }
 
+            serial_sem_reset(handle->tx_sem);
             memcpy(handle->send_buffer, data, size);
             handle->tx_length = size;
             handle->tx_index = 0;
             handle->tx_done = false;
+            handle->gState = SERIAL_STATE_BUSY;
             handle->tx_done_cb = tx_done_cb;
             DL_UART_clearInterruptStatus(handle->hardware, DL_UART_INTERRUPT_EOT_DONE);
             DL_UART_enableInterrupt(handle->hardware, DL_UART_INTERRUPT_EOT_DONE);
@@ -654,28 +819,26 @@ int SerialTransmit(SerialHandle_t* handle, uint8_t *data, uint16_t size,
                 return SERIAL_ERR_INVALID;
             }
 
-            if ((handle->tx_length > 0U) ||
+            if (serial_tx_transaction_active(handle) ||
                 DL_DMA_isChannelEnabled(DMA, handle->dma_tx_ch)) {
                 return SERIAL_ERR_BUSY;
             }
-            
-            /* 复制数据到发送缓冲区 */
+
+            serial_sem_reset(handle->tx_sem);
             memcpy(handle->send_buffer, data, size);
             handle->tx_length = size;
             handle->tx_index = size;
             handle->tx_done = false;
+            handle->gState = SERIAL_STATE_BUSY;
             handle->tx_done_cb = tx_done_cb;
             DL_UART_clearInterruptStatus(handle->hardware, DL_UART_INTERRUPT_EOT_DONE);
             DL_UART_enableInterrupt(handle->hardware, DL_UART_INTERRUPT_EOT_DONE);
-            
-            /* 配置 DMA 源地址、目标地址和传输大小 */
+
             DL_DMA_setSrcAddr(DMA, handle->dma_tx_ch, (uint32_t)handle->send_buffer);
             DL_DMA_setDestAddr(DMA, handle->dma_tx_ch, (uint32_t)(&handle->hardware->TXDATA));
             DL_DMA_setTransferSize(DMA, handle->dma_tx_ch, size);
-            
-            /* 启用 DMA TX 中断和通道 */
             DL_DMA_enableChannel(DMA, handle->dma_tx_ch);
-            
+
             return size;
         }
 
@@ -690,6 +853,7 @@ int SerialTransmit(SerialHandle_t* handle, uint8_t *data, uint16_t size,
 int SerialReceive(SerialHandle_t* handle, uint8_t *data, uint16_t size,
                   int timeout, RecvCb rx_done_cb)
 {
+    int rc;
     uint16_t i = 0;
     TickType_t start_tick = 0;
 
@@ -731,22 +895,33 @@ int SerialReceive(SerialHandle_t* handle, uint8_t *data, uint16_t size,
         /* 中断或 DMA 模式：使用信号量同步 */
         case SERIAL_MODE_IT:
             handle->recv_cb = rx_done_cb;
-            if (serial_start_it_receive(handle, size, false) < 0) {
+            rc = serial_start_it_receive(handle, size, false);
+            if (rc < 0) {
                 handle->recv_cb = NULL;
-                return SERIAL_ERR_INVALID;
+                return rc;
             }
             break;
 
         case SERIAL_MODE_DMA:
             handle->recv_cb = rx_done_cb;
-            if (serial_start_dma_receive(handle, size, false) < 0) {
+            rc = serial_start_dma_receive(handle, size, false);
+            if (rc < 0) {
                 handle->recv_cb = NULL;
-                return SERIAL_ERR_INVALID;
+                return rc;
             }
             break;
 
         default:
             return SERIAL_ERR_INVALID;
+    }
+
+    if (handle->rx_done) {
+        if (handle->recv_count > size) {
+            handle->recv_count = size;
+        }
+        memcpy(data, handle->recv_buffer, handle->recv_count);
+        serial_invoke_rx_done_cb(handle, data, handle->recv_count);
+        return handle->recv_count;
     }
 
     /* 等待接收完成 (使用信号量) */
@@ -783,6 +958,8 @@ int SerialReceive(SerialHandle_t* handle, uint8_t *data, uint16_t size,
 int SerialReceiveIDLE(SerialHandle_t* handle, uint8_t *data, uint16_t max_size,
                       RecvCb rx_done_cb)
 {
+    int rc;
+
     if (!handle || !data || max_size == 0) {
         return SERIAL_ERR_INVALID;
     }
@@ -807,22 +984,33 @@ int SerialReceiveIDLE(SerialHandle_t* handle, uint8_t *data, uint16_t max_size,
         /* 中断或 DMA 模式：启动接收，直到硬件空闲事件到来 */
         case SERIAL_MODE_IT:
             handle->recv_cb = rx_done_cb;
-            if (serial_start_it_receive(handle, max_size, true) < 0) {
+            rc = serial_start_it_receive(handle, max_size, true);
+            if (rc < 0) {
                 handle->recv_cb = NULL;
-                return SERIAL_ERR_INVALID;
+                return rc;
             }
             break;
 
         case SERIAL_MODE_DMA:
             handle->recv_cb = rx_done_cb;
-            if (serial_start_dma_receive(handle, max_size, true) < 0) {
+            rc = serial_start_dma_receive(handle, max_size, true);
+            if (rc < 0) {
                 handle->recv_cb = NULL;
-                return SERIAL_ERR_INVALID;
+                return rc;
             }
             break;
 
         default:
             return SERIAL_ERR_INVALID;
+    }
+
+    if (handle->rx_done) {
+        if (handle->recv_count > max_size) {
+            handle->recv_count = max_size;
+        }
+        memcpy(data, handle->recv_buffer, handle->recv_count);
+        serial_invoke_rx_done_cb(handle, data, handle->recv_count);
+        return handle->recv_count;
     }
 
     /*
@@ -858,30 +1046,33 @@ int debug_irq_cnt=0;
  */
 void SerialIRQ(SerialHandle_t* handle)
 {
+    uint16_t event_budget = SERIAL_IRQ_EVENT_BUDGET;
     DL_UART_IIDX status;
 
     if (!handle || !handle->hardware) {
         return;
     }
 
-    while ((status = DL_UART_Main_getPendingInterrupt(handle->hardware)) !=
-           DL_UART_MAIN_IIDX_NO_INTERRUPT) {
+    while ((event_budget-- > 0U) &&
+           ((status = DL_UART_Main_getPendingInterrupt(handle->hardware)) !=
+            DL_UART_MAIN_IIDX_NO_INTERRUPT)) {
         switch (status) {
             case DL_UART_MAIN_IIDX_RX:
+            {
+                bool overflow = false;
+
                 if (!serial_rx_transaction_active(handle)) {
-                    serial_flush_rx_fifo(handle->hardware);
+                    serial_flush_rx_fifo_bounded(
+                        handle->hardware, SERIAL_IRQ_FIFO_BUDGET);
                     break;
                 }
 
-                while (!DL_UART_isRXFIFOEmpty(handle->hardware)) {
-                    if (handle->recv_count < handle->recv_expected) {
-                        handle->recv_buffer[handle->recv_count++] =
-                            DL_UART_receiveData(handle->hardware);
-                    } else {
-                        (void) DL_UART_receiveData(handle->hardware);
-                        if (handle->error_cb) {
-                            handle->error_cb(SERIAL_ERR_BUSY, handle->param);
-                        }
+                (void) serial_drain_rx_fifo_bounded(
+                    handle, &overflow, SERIAL_IRQ_FIFO_BUDGET);
+                if (overflow) {
+                    handle->error_code |= SERIAL_ERROR_OVERRUN;
+                    if (handle->error_cb != NULL) {
+                        handle->error_cb(SERIAL_ERR_BUSY, handle->param);
                     }
                 }
 
@@ -896,12 +1087,14 @@ void SerialIRQ(SerialHandle_t* handle)
                     return;
                 }
                 break;
+            }
 
             case DL_UART_MAIN_IIDX_RX_TIMEOUT_ERROR:
                 if (!serial_rx_transaction_active(handle)) {
                     DL_UART_clearInterruptStatus(handle->hardware,
                         DL_UART_INTERRUPT_RX_TIMEOUT_ERROR);
-                    serial_flush_rx_fifo(handle->hardware);
+                    serial_flush_rx_fifo_bounded(
+                        handle->hardware, SERIAL_IRQ_FIFO_BUDGET);
                     break;
                 }
 
@@ -913,24 +1106,36 @@ void SerialIRQ(SerialHandle_t* handle)
                 if (handle->rx_using_dma && handle->rx_wait_idle &&
                     (handle->dma_rx_ch != SERIAL_DMA_CHANNEL_INVALID)) {
                     uint16_t remaining = DL_DMA_getTransferSize(DMA, handle->dma_rx_ch);
-                    uint16_t received  = 0;
+                    uint16_t dma_expected = handle->recv_expected;
+                    uint16_t received = handle->recv_count;
 
-                    if (remaining < handle->recv_expected) {
-                        received = handle->recv_expected - remaining;
+                    if (handle->recv_count < dma_expected) {
+                        dma_expected -= handle->recv_count;
+                    } else {
+                        dma_expected = 0U;
+                    }
+
+                    if (remaining < dma_expected) {
+                        received += (uint16_t) (dma_expected - remaining);
                     }
 
                     serial_dbg_set_finish_reason(UART_DBG_RX_FINISH_RX_TIMEOUT);
                     serial_finish_rx(handle, received);
                     return;
                 } else if (handle->rx_wait_idle) {
+                    bool overflow = false;
+
                     /*
                      * IT + IDLE 模式下，尾部未达到 RX FIFO 阈值的字节会
                      * 留在 FIFO 中，等 RX_TIMEOUT_ERROR 到来后在这里一起取走。
                      */
-                    while (!DL_UART_isRXFIFOEmpty(handle->hardware) &&
-                           (handle->recv_count < handle->recv_expected)) {
-                        handle->recv_buffer[handle->recv_count++] =
-                            DL_UART_receiveData(handle->hardware);
+                    (void) serial_drain_rx_fifo_bounded(
+                        handle, &overflow, SERIAL_IRQ_FIFO_BUDGET);
+                    if (overflow) {
+                        handle->error_code |= SERIAL_ERROR_OVERRUN;
+                        if (handle->error_cb != NULL) {
+                            handle->error_cb(SERIAL_ERR_BUSY, handle->param);
+                        }
                     }
 
                     if (handle->recv_count == 0U) {
@@ -944,11 +1149,8 @@ void SerialIRQ(SerialHandle_t* handle)
                 break;
 
             case DL_UART_MAIN_IIDX_TX:
-                while ((handle->tx_index < handle->tx_length) &&
-                       (DL_UART_isTXFIFOFull(handle->hardware) == false)) {
-                    DL_UART_transmitData(handle->hardware,
-                        handle->send_buffer[handle->tx_index++]);
-                }
+                (void) serial_fill_tx_fifo_bounded(
+                    handle, SERIAL_IRQ_FIFO_BUDGET);
 
                 if (handle->tx_index >= handle->tx_length) {
                     serial_disable_tx_it(handle->hardware);
@@ -973,16 +1175,59 @@ void SerialIRQ(SerialHandle_t* handle)
             case DL_UART_MAIN_IIDX_EOT_DONE:
                 if (((handle->mode == SERIAL_MODE_DMA) ||
                      (handle->mode == SERIAL_MODE_IT)) &&
-                    (handle->tx_length > 0U)) {
+                    serial_tx_transaction_active(handle)) {
                     serial_finish_tx(handle);
                 }
                 break;
 
             case DL_UART_MAIN_IIDX_OVERRUN_ERROR:
+                handle->error_code |= SERIAL_ERROR_OVERRUN;
+                DL_UART_clearInterruptStatus(
+                    handle->hardware, DL_UART_INTERRUPT_OVERRUN_ERROR);
+                if (serial_rx_transaction_active(handle)) {
+                    serial_finish_rx(handle, serial_get_received_count(handle));
+                    return;
+                }
+                if (handle->error_cb) {
+                    handle->error_cb((int) status, handle->param);
+                }
+                break;
             case DL_UART_MAIN_IIDX_BREAK_ERROR:
+                handle->error_code |= SERIAL_ERROR_BREAK;
+                DL_UART_clearInterruptStatus(
+                    handle->hardware, DL_UART_INTERRUPT_BREAK_ERROR);
+                if (handle->error_cb) {
+                    handle->error_cb((int) status, handle->param);
+                }
+                break;
             case DL_UART_MAIN_IIDX_PARITY_ERROR:
+                handle->error_code |= SERIAL_ERROR_PARITY;
+                DL_UART_clearInterruptStatus(
+                    handle->hardware, DL_UART_INTERRUPT_PARITY_ERROR);
+                if (serial_rx_transaction_active(handle)) {
+                    serial_finish_rx(handle, serial_get_received_count(handle));
+                    return;
+                }
+                if (handle->error_cb) {
+                    handle->error_cb((int) status, handle->param);
+                }
+                break;
             case DL_UART_MAIN_IIDX_FRAMING_ERROR:
+                handle->error_code |= SERIAL_ERROR_FRAMING;
+                DL_UART_clearInterruptStatus(
+                    handle->hardware, DL_UART_INTERRUPT_FRAMING_ERROR);
+                if (serial_rx_transaction_active(handle)) {
+                    serial_finish_rx(handle, serial_get_received_count(handle));
+                    return;
+                }
+                if (handle->error_cb) {
+                    handle->error_cb((int) status, handle->param);
+                }
+                break;
             case DL_UART_MAIN_IIDX_NOISE_ERROR:
+                handle->error_code |= SERIAL_ERROR_NOISE;
+                DL_UART_clearInterruptStatus(
+                    handle->hardware, DL_UART_INTERRUPT_NOISE_ERROR);
                 if (handle->error_cb) {
                     handle->error_cb((int) status, handle->param);
                 }
