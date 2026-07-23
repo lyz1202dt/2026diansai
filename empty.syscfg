@@ -13,6 +13,9 @@ const GPIO          = scripting.addModule("/ti/driverlib/GPIO", {}, false);
 const GPIO1         = GPIO.addInstance();
 const UART          = scripting.addModule("/ti/driverlib/UART", {}, false);
 const UART1         = UART.addInstance();
+const UART2         = UART.addInstance();
+const UART3         = UART.addInstance();
+const UART4         = UART.addInstance();
 const ProjectConfig = scripting.addModule("/ti/project_config/ProjectConfig");
 
 /**
@@ -25,26 +28,53 @@ const Board = scripting.addModule("/ti/driverlib/Board", {}, false);
 
 const SYSCTL = scripting.addModule("/ti/driverlib/SYSCTL", {}, false);
 
-UART1.$name                      = "UART_0";
-UART1.targetBaudRate             = 115200;
-UART1.enableFIFO                 = true;
-UART1.rxTimeoutValue             = 4;
-UART1.enabledInterrupts          = ["BREAK_ERROR","CTS_DONE","DMA_DONE_RX","DMA_DONE_TX","EOT_DONE","FRAMING_ERROR","NOISE_ERROR","OVERRUN_ERROR","PARITY_ERROR","RX","RXD_NEG_EDGE","RXD_POS_EDGE","RX_TIMEOUT_ERROR","TX"];
-UART1.enabledDMARXTriggers       = "DL_UART_DMA_INTERRUPT_RX";
-UART1.enabledDMATXTriggers       = "DL_UART_DMA_INTERRUPT_TX";
-UART1.enableInternalLoopback     = true;
-UART1.peripheral.rxPin.$assign   = "PA1";
-UART1.peripheral.txPin.$assign   = "PA0";
-UART1.txPinConfig.$name          = "ti_driverlib_gpio_GPIOPinGeneric0";
-UART1.rxPinConfig.$name          = "ti_driverlib_gpio_GPIOPinGeneric1";
-UART1.DMA_CHANNEL_RX.$name       = "DMA_CH0";
-UART1.DMA_CHANNEL_RX.srcLength   = "BYTE";
-UART1.DMA_CHANNEL_RX.dstLength   = "BYTE";
-UART1.DMA_CHANNEL_RX.addressMode = "f2b";
-UART1.DMA_CHANNEL_TX.$name       = "DMA_CH1";
-UART1.DMA_CHANNEL_TX.srcLength   = "BYTE";
-UART1.DMA_CHANNEL_TX.dstLength   = "BYTE";
-UART1.DMA_CHANNEL_TX.addressMode = "b2f";
+UART1.$name                    = "UART_0";
+UART1.targetBaudRate           = 115200;
+UART1.enableFIFO               = true;
+UART1.rxTimeoutValue           = 4;
+UART1.enabledInterrupts        = ["BREAK_ERROR","CTS_DONE","DMA_DONE_RX","DMA_DONE_TX","EOT_DONE","FRAMING_ERROR","NOISE_ERROR","OVERRUN_ERROR","PARITY_ERROR","RX","RXD_NEG_EDGE","RXD_POS_EDGE","RX_TIMEOUT_ERROR","TX"];
+UART1.enableInternalLoopback   = true;
+UART1.peripheral.$assign       = "UART0";
+UART1.peripheral.rxPin.$assign = "PB1";
+UART1.peripheral.txPin.$assign = "PB0";
+UART1.txPinConfig.$name        = "ti_driverlib_gpio_GPIOPinGeneric0";
+UART1.rxPinConfig.$name        = "ti_driverlib_gpio_GPIOPinGeneric1";
+
+UART2.$name                    = "UART_1";
+UART2.targetBaudRate           = 115200;
+UART2.enableFIFO               = true;
+UART2.rxTimeoutValue           = 4;
+UART2.enabledInterrupts        = ["BREAK_ERROR","CTS_DONE","DMA_DONE_RX","DMA_DONE_TX","EOT_DONE","FRAMING_ERROR","NOISE_ERROR","OVERRUN_ERROR","PARITY_ERROR","RX","RXD_NEG_EDGE","RXD_POS_EDGE","RX_TIMEOUT_ERROR","TX"];
+UART2.enableInternalLoopback   = true;
+UART2.peripheral.$assign       = "UART1";
+UART2.peripheral.rxPin.$assign = "PA9";
+UART2.peripheral.txPin.$assign = "PA8";
+UART2.txPinConfig.$name        = "ti_driverlib_gpio_GPIOPinGeneric2";
+UART2.rxPinConfig.$name        = "ti_driverlib_gpio_GPIOPinGeneric3";
+
+UART3.$name                    = "UART_2";
+UART3.targetBaudRate           = 115200;
+UART3.enableFIFO               = true;
+UART3.rxTimeoutValue           = 4;
+UART3.enabledInterrupts        = ["BREAK_ERROR","CTS_DONE","DMA_DONE_RX","DMA_DONE_TX","EOT_DONE","FRAMING_ERROR","NOISE_ERROR","OVERRUN_ERROR","PARITY_ERROR","RX","RXD_NEG_EDGE","RXD_POS_EDGE","RX_TIMEOUT_ERROR","TX"];
+UART3.enableInternalLoopback   = true;
+UART3.peripheral.$assign       = "UART2";
+UART3.peripheral.rxPin.$assign = "PA24";
+UART3.peripheral.txPin.$assign = "PA21";
+UART3.txPinConfig.$name        = "ti_driverlib_gpio_GPIOPinGeneric4";
+UART3.rxPinConfig.$name        = "ti_driverlib_gpio_GPIOPinGeneric5";
+
+UART4.$name                    = "UART_3";
+UART4.targetBaudRate           = 115200;
+UART4.enableFIFO               = true;
+UART4.rxTimeoutValue           = 4;
+UART4.enabledInterrupts        = ["BREAK_ERROR","CTS_DONE","DMA_DONE_RX","DMA_DONE_TX","EOT_DONE","FRAMING_ERROR","NOISE_ERROR","OVERRUN_ERROR","PARITY_ERROR","RX","RXD_NEG_EDGE","RXD_POS_EDGE","RX_TIMEOUT_ERROR","TX"];
+UART4.enableInternalLoopback   = true;
+UART4.peripheral.$assign       = "UART3";
+UART4.peripheral.rxPin.$assign = "PA25";
+UART4.peripheral.txPin.$assign = "PA26";
+UART4.txPinConfig.$name        = "ti_driverlib_gpio_GPIOPinGeneric6";
+UART4.rxPinConfig.$name        = "ti_driverlib_gpio_GPIOPinGeneric7";
 
 ProjectConfig.genLibDrivers = true;
 
@@ -53,11 +83,8 @@ ProjectConfig.genLibDrivers = true;
  * version of the tool will not impact the pinmux you originally saw.  These lines can be completely deleted in order to
  * re-solve from scratch.
  */
-GPIO1.associatedPins[0].pin.$suggestSolution     = "PB13";
-Board.peripheral.$suggestSolution                = "DEBUGSS";
-Board.peripheral.swclkPin.$suggestSolution       = "PA20";
-Board.peripheral.swdioPin.$suggestSolution       = "PA19";
-SYSCTL.peripheral.$suggestSolution               = "SYSCTL";
-UART1.peripheral.$suggestSolution                = "UART0";
-UART1.DMA_CHANNEL_RX.peripheral.$suggestSolution = "DMA_CH1";
-UART1.DMA_CHANNEL_TX.peripheral.$suggestSolution = "DMA_CH0";
+GPIO1.associatedPins[0].pin.$suggestSolution = "PB13";
+Board.peripheral.$suggestSolution            = "DEBUGSS";
+Board.peripheral.swclkPin.$suggestSolution   = "PA20";
+Board.peripheral.swdioPin.$suggestSolution   = "PA19";
+SYSCTL.peripheral.$suggestSolution           = "SYSCTL";

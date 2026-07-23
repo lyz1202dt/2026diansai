@@ -112,7 +112,3 @@ int CLI_EnvInit(void)
     return 0;
 }
 
-void UART_0_INST_IRQHandler(void)
-{
-    SerialIRQ(g_cli_serial);
-}
