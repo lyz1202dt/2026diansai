@@ -16,6 +16,7 @@
 #include "Bsp/motor.h"
 #include "Bsp/mpu6050.h"
 #include "Bsp/gw_model.h"
+#include "Bsp/OLED.h"
 #include <ti/driverlib/dl_dma.h>
 
 uint8_t send_str[8] = {1, 2, 3, 4, 5, 6, 7, 8};
@@ -110,6 +111,8 @@ int app_main() {
   MPU6050_Init();
 
   GWModelInit();
+  OLED_Init();
+  OLED_ShowString(0, 0, 16, "Hello World");
   g_serial = SerialInit(UART_0_INST, SERIAL_MODE_IT, NULL, NULL);
   NVIC_EnableIRQ(UART_0_INST_INT_IRQN);
   NVIC_EnableIRQ(ENCODER_PIN_GPIOB_INT_IRQN);

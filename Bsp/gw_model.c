@@ -10,19 +10,19 @@ SemaphoreHandle_t k_gw_tracker_semphr;
 static void switch_sensor_channel(uint8_t channnel)
 {
     if(channnel&0x01)
-        DL_GPIO_setPins(GW_ADDR_PIN_ADDR0_PORT, GW_ADDR_PIN_ADDR0_PIN);
+        DL_GPIO_setPins(GW_ADDR_PIN_PORT, GW_ADDR_PIN_ADDR0_PIN);
     else 
-        DL_GPIO_clearPins(GW_ADDR_PIN_ADDR0_PORT, GW_ADDR_PIN_ADDR0_PIN);
+        DL_GPIO_clearPins(GW_ADDR_PIN_PORT, GW_ADDR_PIN_ADDR0_PIN);
 
     if(channnel&0x02)
-        DL_GPIO_setPins(GW_ADDR_PIN_ADDR1_PORT, GW_ADDR_PIN_ADDR1_PIN);
+        DL_GPIO_setPins(GW_ADDR_PIN_PORT, GW_ADDR_PIN_ADDR1_PIN);
     else 
-        DL_GPIO_clearPins(GW_ADDR_PIN_ADDR1_PORT, GW_ADDR_PIN_ADDR1_PIN);
+        DL_GPIO_clearPins(GW_ADDR_PIN_PORT, GW_ADDR_PIN_ADDR1_PIN);
 
     if(channnel&0x04)
-        DL_GPIO_setPins(GW_ADDR_PIN_ADDR2_PORT, GW_ADDR_PIN_ADDR2_PIN);
+        DL_GPIO_setPins(GW_ADDR_PIN_PORT, GW_ADDR_PIN_ADDR2_PIN);
     else 
-        DL_GPIO_clearPins(GW_ADDR_PIN_ADDR2_PORT, GW_ADDR_PIN_ADDR2_PIN);
+        DL_GPIO_clearPins(GW_ADDR_PIN_PORT, GW_ADDR_PIN_ADDR2_PIN);
 }
 
 void GWModelInit()
