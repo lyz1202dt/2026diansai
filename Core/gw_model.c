@@ -28,18 +28,29 @@ static void switch_sensor_channel(uint8_t channnel)
 void GWModelInit()
 {
     k_gw_tracker_semphr=xSemaphoreCreateBinary();
-    xSemaphoreTake(k_gw_tracker_semphr, 0);
+    if(k_gw_tracker_semphr != NULL) {
+        xSemaphoreTake(k_gw_tracker_semphr, 0);
+    }
 }
 
 uint32_t GWGetState(uint16_t *value)
 {
+    if((k_gw_tracker_semphr == NULL) || (value == NULL)) {
+        return 0;
+    }
+
+    xSemaphoreTake(k_gw_tracker_semphr, 0);
+
     for(int i=0;i<8;i++)
     {
         switch_sensor_channel(i);
         vTaskDelay(pdMS_TO_TICKS(1));   //等待电平稳定
+        xSemaphoreTake(k_gw_tracker_semphr, 0);
+        DL_ADC12_enableConversions(ADC12_0_INST);
         DL_ADC12_startConversion(ADC12_0_INST);
-        if(xSemaphoreTake(k_gw_tracker_semphr, pdMS_TO_TICKS(5))==pdFALSE)
+        if(xSemaphoreTake(k_gw_tracker_semphr, pdMS_TO_TICKS(5))==pdFALSE) {
             return 0;
+        }
         value[i]=DL_ADC12_getMemResult(ADC12_0_INST, DL_ADC12_MEM_IDX_0);
     }
     return 1;
@@ -48,13 +59,13 @@ uint32_t GWGetState(uint16_t *value)
 void ADC12_0_INST_IRQHandler(void)
 {
     switch (DL_ADC12_getPendingInterrupt(ADC12_0_INST)) {
-        case DL_ADC12_IIDX_MEM0_RESULT_LOADED:
-
-            BaseType_t pxHigherPriorityTaskWoken = pdFALSE;;
+        case DL_ADC12_IIDX_MEM0_RESULT_LOADED: {
+            BaseType_t pxHigherPriorityTaskWoken = pdFALSE;
             xSemaphoreGiveFromISR(k_gw_tracker_semphr, &pxHigherPriorityTaskWoken);
             portYIELD_FROM_ISR(pxHigherPriorityTaskWoken);
 
             break;
+        }
         default:
             break;
     }
