@@ -21,6 +21,14 @@
 #ifndef _INV_MPU_H_
 #define _INV_MPU_H_
 
+#if defined(__MSPM0G3507__) && !defined(MOTION_DRIVER_TARGET_MSPM0)
+#define MOTION_DRIVER_TARGET_MSPM0
+#endif
+
+#if defined(MOTION_DRIVER_TARGET_MSPM0) && !defined(MPU6050)
+#define MPU6050
+#endif
+
 #define INV_X_GYRO      (0x40)
 #define INV_Y_GYRO      (0x20)
 #define INV_Z_GYRO      (0x10)

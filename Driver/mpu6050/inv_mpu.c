@@ -106,12 +106,13 @@ static inline int reg_int_cb(struct int_param_s *int_param)
 #define labs                  abs
 #define fabs(x)               (((x) > 0) ? (x) : -(x))
 #elif defined MOTION_DRIVER_TARGET_MSPM0
-#include "MPU6050.h"
-#include "SysTick.h"
+#include "Core/mpu6050.h"
+#include <FreeRTOS.h>
+#include <task.h>
 #define i2c_write mspm0_i2c_write
 #define i2c_read  mspm0_i2c_read
-#define delay_ms  Delay
-#define get_ms    SysGetTick
+#define delay_ms(num_ms) vTaskDelay(pdMS_TO_TICKS(num_ms))
+#define get_ms(count)    (*(count) = (unsigned long)(xTaskGetTickCount() * portTICK_PERIOD_MS))
 #define log_i(...)                                                                                                     \
     do                                                                                                                 \
     {                                                                                                                  \

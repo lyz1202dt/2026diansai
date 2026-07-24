@@ -14,6 +14,7 @@
 /* 使用 driverlib 的 DMA 接口 */
 #include "Driver/uart/uart.h"
 #include "Core/motor.h"
+#include "Core/mpu6050.h"
 #include <ti/driverlib/dl_dma.h>
 
 uint8_t send_str[8] = {1, 2, 3, 4, 5, 6, 7, 8};
@@ -96,10 +97,16 @@ void recv_done(void *param) {}
 
 uint16_t adc_value_group[8];
 bool adc_success=false;
+float mpu6050_quat[4];
+float mpu6050_roll;
+float mpu6050_pitch;
+float mpu6050_yaw;
+bool mpu6050_success=false;
 
 int app_main() {
   L298N_Init(&g_l298n);
   EncoderInit(&g_encoder1);
+  MPU6050_Init();
 
   GWModelInit();
   g_serial = SerialInit(UART_0_INST, SERIAL_MODE_IT, NULL, NULL);
@@ -117,6 +124,10 @@ int app_main() {
     DL_GPIO_clearPins(LED_PORT, LED_LED0_PIN_PIN);
     vTaskDelay(50);
     adc_success=GWGetState(adc_value_group);
+    mpu6050_success=(read_quad(mpu6050_quat)==0);
+    if(mpu6050_success) {
+      get_euler_angles(mpu6050_quat, &mpu6050_roll, &mpu6050_pitch, &mpu6050_yaw);
+    }
   }
   return 0;
 }

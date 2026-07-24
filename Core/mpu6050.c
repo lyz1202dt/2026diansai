@@ -2,44 +2,111 @@
 
 #include "Driver/mpu6050/inv_mpu.h"
 #include "Driver/mpu6050/inv_mpu_dmp_motion_driver.h"
+#include <semphr.h>
+#include <string.h>
+#include <task.h>
 
 #define I2C_TIMEOUT_MS     (10)
 #define mspm0_delay_ms     vTaskDelay
 #define mspm0_get_clock_ms SysGetTick
 
+static SemaphoreHandle_t k_mpu6050_i2c_semphr;
+static uint8_t const *g_mpu6050_i2c_tx_ptr;
+static uint32_t g_mpu6050_i2c_tx_cnt;
+static uint8_t *g_mpu6050_i2c_rx_ptr;
+static uint32_t g_mpu6050_i2c_rx_len;
+static uint32_t g_mpu6050_i2c_rx_idx;
+static volatile int g_mpu6050_i2c_status;
+
+static void mpu6050_i2c_init_semphr(void)
+{
+    if (k_mpu6050_i2c_semphr == NULL)
+    {
+        k_mpu6050_i2c_semphr = xSemaphoreCreateBinary();
+    }
+
+    if (k_mpu6050_i2c_semphr != NULL)
+    {
+        xSemaphoreTake(k_mpu6050_i2c_semphr, 0);
+    }
+}
+
+static void mpu6050_i2c_tx_fifo_fill(void)
+{
+    if (g_mpu6050_i2c_tx_cnt == 0) return;
+
+    unsigned fillcnt = DL_I2C_fillControllerTXFIFO(MPU6050_I2C_INST,
+                                                   g_mpu6050_i2c_tx_ptr,
+                                                   g_mpu6050_i2c_tx_cnt);
+    g_mpu6050_i2c_tx_ptr += fillcnt;
+    g_mpu6050_i2c_tx_cnt -= fillcnt;
+}
+
+static void mpu6050_i2c_rx_fifo_drain(void)
+{
+    while (!DL_I2C_isControllerRXFIFOEmpty(MPU6050_I2C_INST))
+    {
+        uint8_t c;
+        c = DL_I2C_receiveControllerData(MPU6050_I2C_INST);
+        if (g_mpu6050_i2c_rx_idx < g_mpu6050_i2c_rx_len)
+        {
+            g_mpu6050_i2c_rx_ptr[g_mpu6050_i2c_rx_idx] = c;
+            ++g_mpu6050_i2c_rx_idx;
+        }
+    }
+}
+
+static int mpu6050_i2c_wait_idle(void)
+{
+    TickType_t start_tick = xTaskGetTickCount();
+    TickType_t timeout_ticks = pdMS_TO_TICKS(I2C_TIMEOUT_MS);
+
+    do
+    {
+        if (DL_I2C_getControllerStatus(MPU6050_I2C_INST) & DL_I2C_CONTROLLER_STATUS_IDLE)
+        {
+            return 0;
+        }
+        vTaskDelay(1);
+    } while ((xTaskGetTickCount() - start_tick) < timeout_ticks);
+
+    mpu6050_i2c_sda_unlock();
+    return -1;
+}
+
 static int mspm0_i2c_disable(void)
 {
-    DL_I2C_reset(I2C_MPU6050_INST);
-    DL_GPIO_initDigitalOutput(GPIO_I2C_MPU6050_IOMUX_SCL);
-    DL_GPIO_initDigitalInputFeatures(GPIO_I2C_MPU6050_IOMUX_SDA,
+    DL_I2C_reset(MPU6050_I2C_INST);
+    DL_GPIO_initDigitalOutput(GPIO_MPU6050_I2C_IOMUX_SCL);
+    DL_GPIO_initDigitalInputFeatures(GPIO_MPU6050_I2C_IOMUX_SDA,
                                      DL_GPIO_INVERSION_DISABLE,
                                      DL_GPIO_RESISTOR_NONE,
                                      DL_GPIO_HYSTERESIS_DISABLE,
                                      DL_GPIO_WAKEUP_DISABLE);
-    DL_GPIO_clearPins(GPIO_I2C_MPU6050_SCL_PORT, GPIO_I2C_MPU6050_SCL_PIN);
-    DL_GPIO_enableOutput(GPIO_I2C_MPU6050_SCL_PORT, GPIO_I2C_MPU6050_SCL_PIN);
+    DL_GPIO_clearPins(GPIO_MPU6050_I2C_SCL_PORT, GPIO_MPU6050_I2C_SCL_PIN);
+    DL_GPIO_enableOutput(GPIO_MPU6050_I2C_SCL_PORT, GPIO_MPU6050_I2C_SCL_PIN);
     return 0;
 }
 
 static int mspm0_i2c_enable(void)
 {
-    DL_I2C_reset(I2C_MPU6050_INST);
-    DL_GPIO_initPeripheralInputFunctionFeatures(GPIO_I2C_MPU6050_IOMUX_SDA,
-                                                GPIO_I2C_MPU6050_IOMUX_SDA_FUNC,
+    DL_I2C_reset(MPU6050_I2C_INST);
+    DL_GPIO_initPeripheralInputFunctionFeatures(GPIO_MPU6050_I2C_IOMUX_SDA,
+                                                GPIO_MPU6050_I2C_IOMUX_SDA_FUNC,
                                                 DL_GPIO_INVERSION_DISABLE,
                                                 DL_GPIO_RESISTOR_NONE,
                                                 DL_GPIO_HYSTERESIS_DISABLE,
                                                 DL_GPIO_WAKEUP_DISABLE);
-    DL_GPIO_initPeripheralInputFunctionFeatures(GPIO_I2C_MPU6050_IOMUX_SCL,
-                                                GPIO_I2C_MPU6050_IOMUX_SCL_FUNC,
+    DL_GPIO_initPeripheralInputFunctionFeatures(GPIO_MPU6050_I2C_IOMUX_SCL,
+                                                GPIO_MPU6050_I2C_IOMUX_SCL_FUNC,
                                                 DL_GPIO_INVERSION_DISABLE,
                                                 DL_GPIO_RESISTOR_NONE,
                                                 DL_GPIO_HYSTERESIS_DISABLE,
                                                 DL_GPIO_WAKEUP_DISABLE);
-    DL_GPIO_enableHiZ(GPIO_I2C_MPU6050_IOMUX_SDA);
-    DL_GPIO_enableHiZ(GPIO_I2C_MPU6050_IOMUX_SCL);
-    DL_I2C_enablePower(I2C_MPU6050_INST);
-    SYSCFG_DL_I2C_MPU6050_init();
+    DL_GPIO_enableHiZ(GPIO_MPU6050_I2C_IOMUX_SDA);
+    DL_GPIO_enableHiZ(GPIO_MPU6050_I2C_IOMUX_SCL);
+    DL_I2C_enablePower(MPU6050_I2C_INST);
+    SYSCFG_DL_MPU6050_I2C_init();
     return 0;
 }
 
@@ -49,105 +116,132 @@ void mpu6050_i2c_sda_unlock(void)
     mspm0_i2c_disable();
     do
     {
-        DL_GPIO_clearPins(GPIO_I2C_MPU6050_SCL_PORT, GPIO_I2C_MPU6050_SCL_PIN);
+        DL_GPIO_clearPins(GPIO_MPU6050_I2C_SCL_PORT, GPIO_MPU6050_I2C_SCL_PIN);
         mspm0_delay_ms(1);
-        DL_GPIO_setPins(GPIO_I2C_MPU6050_SCL_PORT, GPIO_I2C_MPU6050_SCL_PIN);
+        DL_GPIO_setPins(GPIO_MPU6050_I2C_SCL_PORT, GPIO_MPU6050_I2C_SCL_PIN);
         mspm0_delay_ms(1);
 
-        if (DL_GPIO_readPins(GPIO_I2C_MPU6050_SDA_PORT, GPIO_I2C_MPU6050_SDA_PIN)) break;
+        if (DL_GPIO_readPins(GPIO_MPU6050_I2C_SDA_PORT, GPIO_MPU6050_I2C_SDA_PIN)) break;
     } while (++cycleCnt < 100);
     mspm0_i2c_enable();
 }
 
 int mspm0_i2c_write(unsigned char slave_addr, unsigned char reg_addr, unsigned char length, unsigned char const *data)
 {
-    unsigned int cnt = length;
-    unsigned char const *ptr = data;
-    unsigned long start, cur;
-
     if (!length) return 0;
+    if (k_mpu6050_i2c_semphr == NULL) return -1;
 
-    mspm0_get_clock_ms(&start);
+    xSemaphoreTake(k_mpu6050_i2c_semphr, 0);
+    g_mpu6050_i2c_status = 0;
+    g_mpu6050_i2c_tx_ptr = data;
+    g_mpu6050_i2c_tx_cnt = length;
 
-    DL_I2C_transmitControllerData(I2C_MPU6050_INST, reg_addr);
-    DL_I2C_clearInterruptStatus(I2C_MPU6050_INST, DL_I2C_INTERRUPT_CONTROLLER_TX_DONE);
+    DL_I2C_transmitControllerData(MPU6050_I2C_INST, reg_addr);
+    DL_I2C_clearInterruptStatus(MPU6050_I2C_INST,
+                                DL_I2C_INTERRUPT_CONTROLLER_TX_DONE |
+                                DL_I2C_INTERRUPT_CONTROLLER_TXFIFO_TRIGGER |
+                                DL_I2C_INTERRUPT_CONTROLLER_NACK |
+                                DL_I2C_INTERRUPT_CONTROLLER_ARBITRATION_LOST);
 
-    while (!(DL_I2C_getControllerStatus(I2C_MPU6050_INST) & DL_I2C_CONTROLLER_STATUS_IDLE));
+    if (mpu6050_i2c_wait_idle() != 0) return -1;
 
-    DL_I2C_startControllerTransfer(I2C_MPU6050_INST, slave_addr, DL_I2C_CONTROLLER_DIRECTION_TX, length + 1);
+    mpu6050_i2c_tx_fifo_fill();
+    DL_I2C_startControllerTransfer(MPU6050_I2C_INST, slave_addr, DL_I2C_CONTROLLER_DIRECTION_TX, length + 1);
 
-    do
+    if (xSemaphoreTake(k_mpu6050_i2c_semphr, pdMS_TO_TICKS(I2C_TIMEOUT_MS)) == pdFALSE)
     {
-        unsigned fillcnt;
-        fillcnt = DL_I2C_fillControllerTXFIFO(I2C_MPU6050_INST, ptr, cnt);
-        cnt -= fillcnt;
-        ptr += fillcnt;
+        mpu6050_i2c_sda_unlock();
+        return -1;
+    }
 
-        mspm0_get_clock_ms(&cur);
-        if (cur >= (start + I2C_TIMEOUT_MS))
-        {
-            mpu6050_i2c_sda_unlock();
-            return -1;
-        }
-    } while (!DL_I2C_getRawInterruptStatus(I2C_MPU6050_INST, DL_I2C_INTERRUPT_CONTROLLER_TX_DONE));
-
-    return 0;
+    return g_mpu6050_i2c_status;
 }
 
 int mspm0_i2c_read(unsigned char slave_addr, unsigned char reg_addr, unsigned char length, unsigned char *data)
 {
-    unsigned i = 0;
-    unsigned long start, cur;
-
     if (!length) return 0;
+    if (k_mpu6050_i2c_semphr == NULL) return -1;
 
-    mspm0_get_clock_ms(&start);
+    xSemaphoreTake(k_mpu6050_i2c_semphr, 0);
+    g_mpu6050_i2c_status = 0;
+    g_mpu6050_i2c_rx_ptr = data;
+    g_mpu6050_i2c_rx_len = length;
+    g_mpu6050_i2c_rx_idx = 0;
 
-    DL_I2C_transmitControllerData(I2C_MPU6050_INST, reg_addr);
-    I2C_MPU6050_INST->MASTER.MCTR = I2C_MCTR_RD_ON_TXEMPTY_ENABLE;
-    DL_I2C_clearInterruptStatus(I2C_MPU6050_INST, DL_I2C_INTERRUPT_CONTROLLER_RX_DONE);
+    DL_I2C_transmitControllerData(MPU6050_I2C_INST, reg_addr);
+    MPU6050_I2C_INST->MASTER.MCTR = I2C_MCTR_RD_ON_TXEMPTY_ENABLE;
+    DL_I2C_clearInterruptStatus(MPU6050_I2C_INST,
+                                DL_I2C_INTERRUPT_CONTROLLER_RX_DONE |
+                                DL_I2C_INTERRUPT_CONTROLLER_RXFIFO_TRIGGER |
+                                DL_I2C_INTERRUPT_CONTROLLER_RXFIFO_FULL |
+                                DL_I2C_INTERRUPT_CONTROLLER_NACK |
+                                DL_I2C_INTERRUPT_CONTROLLER_ARBITRATION_LOST);
 
-    while (!(DL_I2C_getControllerStatus(I2C_MPU6050_INST) & DL_I2C_CONTROLLER_STATUS_IDLE));
+    if (mpu6050_i2c_wait_idle() != 0) return -1;
 
-    DL_I2C_startControllerTransfer(I2C_MPU6050_INST, slave_addr, DL_I2C_CONTROLLER_DIRECTION_RX, length);
+    DL_I2C_startControllerTransfer(MPU6050_I2C_INST, slave_addr, DL_I2C_CONTROLLER_DIRECTION_RX, length);
 
-    do
+    if (xSemaphoreTake(k_mpu6050_i2c_semphr, pdMS_TO_TICKS(I2C_TIMEOUT_MS)) == pdFALSE)
     {
-        if (!DL_I2C_isControllerRXFIFOEmpty(I2C_MPU6050_INST))
-        {
-            uint8_t c;
-            c = DL_I2C_receiveControllerData(I2C_MPU6050_INST);
-            if (i < length)
-            {
-                data[i] = c;
-                ++i;
-            }
-        }
-
-        mspm0_get_clock_ms(&cur);
-        if (cur >= (start + I2C_TIMEOUT_MS))
-        {
-            mpu6050_i2c_sda_unlock();
-            return -1;
-        }
-    } while (!DL_I2C_getRawInterruptStatus(I2C_MPU6050_INST, DL_I2C_INTERRUPT_CONTROLLER_RX_DONE));
-
-    if (!DL_I2C_isControllerRXFIFOEmpty(I2C_MPU6050_INST))
-    {
-        uint8_t c;
-        c = DL_I2C_receiveControllerData(I2C_MPU6050_INST);
-        if (i < length)
-        {
-            data[i] = c;
-            ++i;
-        }
+        MPU6050_I2C_INST->MASTER.MCTR = 0;
+        DL_I2C_flushControllerTXFIFO(MPU6050_I2C_INST);
+        mpu6050_i2c_sda_unlock();
+        return -1;
     }
 
-    I2C_MPU6050_INST->MASTER.MCTR = 0;
-    DL_I2C_flushControllerTXFIFO(I2C_MPU6050_INST);
+    mpu6050_i2c_rx_fifo_drain();
+    MPU6050_I2C_INST->MASTER.MCTR = 0;
+    DL_I2C_flushControllerTXFIFO(MPU6050_I2C_INST);
 
-    if (i == length) return 0;
+    if ((g_mpu6050_i2c_status == 0) && (g_mpu6050_i2c_rx_idx == length)) return 0;
     else return -1;
+}
+
+void MPU6050_I2C_INST_IRQHandler(void)
+{
+    BaseType_t pxHigherPriorityTaskWoken = pdFALSE;
+
+    switch (DL_I2C_getPendingInterrupt(MPU6050_I2C_INST))
+    {
+        case DL_I2C_IIDX_CONTROLLER_TXFIFO_TRIGGER:
+        case DL_I2C_IIDX_CONTROLLER_TXFIFO_EMPTY: {
+            mpu6050_i2c_tx_fifo_fill();
+            break;
+        }
+        case DL_I2C_IIDX_CONTROLLER_RXFIFO_TRIGGER:
+        case DL_I2C_IIDX_CONTROLLER_RXFIFO_FULL: {
+            mpu6050_i2c_rx_fifo_drain();
+            break;
+        }
+        case DL_I2C_IIDX_CONTROLLER_TX_DONE: {
+            if (k_mpu6050_i2c_semphr != NULL)
+            {
+                xSemaphoreGiveFromISR(k_mpu6050_i2c_semphr, &pxHigherPriorityTaskWoken);
+            }
+            break;
+        }
+        case DL_I2C_IIDX_CONTROLLER_RX_DONE: {
+            mpu6050_i2c_rx_fifo_drain();
+            if (k_mpu6050_i2c_semphr != NULL)
+            {
+                xSemaphoreGiveFromISR(k_mpu6050_i2c_semphr, &pxHigherPriorityTaskWoken);
+            }
+            break;
+        }
+        case DL_I2C_IIDX_CONTROLLER_NACK:
+        case DL_I2C_IIDX_CONTROLLER_ARBITRATION_LOST: {
+            g_mpu6050_i2c_status = -1;
+            if (k_mpu6050_i2c_semphr != NULL)
+            {
+                xSemaphoreGiveFromISR(k_mpu6050_i2c_semphr, &pxHigherPriorityTaskWoken);
+            }
+            break;
+        }
+        default:
+            break;
+    }
+
+    portYIELD_FROM_ISR(pxHigherPriorityTaskWoken);
 }
 
 /* Data requested by client. */
@@ -254,7 +348,10 @@ void MPU6050_Init(void)
     unsigned char accel_fsr;
     unsigned short gyro_rate, gyro_fsr;
 
-    if (DL_I2C_getSDAStatus(I2C_MPU6050_INST) == DL_I2C_CONTROLLER_SDA_LOW) mpu6050_i2c_sda_unlock();
+    mpu6050_i2c_init_semphr();
+    NVIC_EnableIRQ(MPU6050_I2C_INST_INT_IRQN);
+
+    if (DL_I2C_getSDAStatus(MPU6050_I2C_INST) == DL_I2C_CONTROLLER_SDA_LOW) mpu6050_i2c_sda_unlock();
 
     result = mpu_init();
 #ifdef DEBUG
@@ -325,8 +422,6 @@ void MPU6050_Init(void)
 
     if (result) return;
 
-    /* Enable INT_GROUP1 handler. */
-    enable_group1_irq = 1;
 }
 
 int read_quad(float *q)

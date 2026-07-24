@@ -70,9 +70,13 @@
 
 #elif defined MOTION_DRIVER_TARGET_MSPM0
 #include "ti_msp_dl_config.h"
-#include "SysTick.h"
-#define delay_ms Delay
-#define get_ms   SysGetTick
+#include <FreeRTOS.h>
+#include <task.h>
+#ifndef __NOP
+#define __NOP() __asm volatile("nop")
+#endif
+#define delay_ms(num_ms) vTaskDelay(pdMS_TO_TICKS(num_ms))
+#define get_ms(count)    (*(count) = (unsigned long)(xTaskGetTickCount() * portTICK_PERIOD_MS))
 #define log_i(...)                                                                                                     \
     do                                                                                                                 \
     {                                                                                                                  \
