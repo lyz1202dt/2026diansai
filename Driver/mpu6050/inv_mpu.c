@@ -106,7 +106,7 @@ static inline int reg_int_cb(struct int_param_s *int_param)
 #define labs                  abs
 #define fabs(x)               (((x) > 0) ? (x) : -(x))
 #elif defined MOTION_DRIVER_TARGET_MSPM0
-#include "Core/mpu6050.h"
+#include "Bsp/mpu6050.h"
 #include <FreeRTOS.h>
 #include <task.h>
 #define i2c_write mspm0_i2c_write

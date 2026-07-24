@@ -1,6 +1,6 @@
 // #include "CLI/App/port.h"
 
-#include "Core/gw_model.h"
+
 #include "projdefs.h"
 #include "ti/devices/msp/m0p/mspm0g350x.h"
 #include "ti_msp_dl_config.h"
@@ -13,8 +13,9 @@
 
 /* 使用 driverlib 的 DMA 接口 */
 #include "Driver/uart/uart.h"
-#include "Core/motor.h"
-#include "Core/mpu6050.h"
+#include "Bsp/motor.h"
+#include "Bsp/mpu6050.h"
+#include "Bsp/gw_model.h"
 #include <ti/driverlib/dl_dma.h>
 
 uint8_t send_str[8] = {1, 2, 3, 4, 5, 6, 7, 8};
