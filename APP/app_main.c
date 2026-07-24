@@ -1,6 +1,8 @@
 // #include "CLI/App/port.h"
 
+#include "Core/gw_model.h"
 #include "projdefs.h"
+#include "ti/devices/msp/m0p/mspm0g350x.h"
 #include "ti_msp_dl_config.h"
 #include <FreeRTOS.h>
 #include <semphr.h>
@@ -92,13 +94,18 @@ void send_done(void *param) {}
 
 void recv_done(void *param) {}
 
+uint16_t adc_value_group[8];
+bool adc_success=false;
+
 int app_main() {
   L298N_Init(&g_l298n);
   EncoderInit(&g_encoder1);
 
+  GWModelInit();
   g_serial = SerialInit(UART_0_INST, SERIAL_MODE_IT, NULL, NULL);
   NVIC_EnableIRQ(UART_0_INST_INT_IRQN);
   NVIC_EnableIRQ(ENCODER_PIN_GPIOB_INT_IRQN);
+  NVIC_EnableIRQ(ADC12_0_INST_INT_IRQN);
   SerialTransmit(g_serial, send_str, 6, send_done);
   SerialReceive(g_serial, revb_str, 8, 100, NULL);
 
@@ -109,6 +116,7 @@ int app_main() {
     vTaskDelay(50);
     DL_GPIO_clearPins(LED_PORT, LED_LED0_PIN_PIN);
     vTaskDelay(50);
+    adc_success=GWGetState(adc_value_group);
   }
   return 0;
 }

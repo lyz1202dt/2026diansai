@@ -1,13 +1,10 @@
 #ifndef __GWMODEL_H__
 #define __GWMODEL_H__
 
-
-typedef struct{
-    
-}
+#include <stdint.h>
 
 void GWModelInit();
 
-uin8_t GWGetState();
+uint32_t GWGetState(uint16_t *value);
 
 #endif

@@ -1,11 +1,9 @@
 #include "gw_model.h"
-#include "portmacro.h"
-#include "projdefs.h"
+#include <FreeRTOS.h>
+#include <semphr.h>
+#include <task.h>
 #include "ti/driverlib/dl_gpio.h"
 #include "ti_msp_dl_config.h"
-#include <FreeRTOS.h>
-#include <task.h>
-#include <semphr.h>
 
 SemaphoreHandle_t k_gw_tracker_semphr;
 
@@ -33,7 +31,7 @@ void GWModelInit()
     xSemaphoreTake(k_gw_tracker_semphr, 0);
 }
 
-bool GWGetState(uint16_t *value)
+uint32_t GWGetState(uint16_t *value)
 {
     for(int i=0;i<8;i++)
     {
@@ -41,10 +39,10 @@ bool GWGetState(uint16_t *value)
         vTaskDelay(pdMS_TO_TICKS(1));   //等待电平稳定
         DL_ADC12_startConversion(ADC12_0_INST);
         if(xSemaphoreTake(k_gw_tracker_semphr, pdMS_TO_TICKS(5))==pdFALSE)
-            return false;
+            return 0;
         value[i]=DL_ADC12_getMemResult(ADC12_0_INST, DL_ADC12_MEM_IDX_0);
     }
-    return true;
+    return 1;
 }
 
 void ADC12_0_INST_IRQHandler(void)
@@ -52,7 +50,7 @@ void ADC12_0_INST_IRQHandler(void)
     switch (DL_ADC12_getPendingInterrupt(ADC12_0_INST)) {
         case DL_ADC12_IIDX_MEM0_RESULT_LOADED:
 
-            BaseType_t pxHigherPriorityTaskWoken;
+            BaseType_t pxHigherPriorityTaskWoken = pdFALSE;;
             xSemaphoreGiveFromISR(k_gw_tracker_semphr, &pxHigherPriorityTaskWoken);
             portYIELD_FROM_ISR(pxHigherPriorityTaskWoken);
 
