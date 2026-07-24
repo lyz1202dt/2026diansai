@@ -11,7 +11,7 @@
 
 /* 使用 driverlib 的 DMA 接口 */
 #include "Driver/uart/uart.h"
-#include "motor.h"
+#include "Core/motor.h"
 #include <ti/driverlib/dl_dma.h>
 
 uint8_t send_str[8] = {1, 2, 3, 4, 5, 6, 7, 8};
