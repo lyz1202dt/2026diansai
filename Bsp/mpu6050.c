@@ -342,9 +342,46 @@ static inline unsigned short inv_orientation_matrix_to_scalar(const signed char 
     return scalar;
 }
 
+static int mpu6050_calibrate_static_gyro_bias(long *bias_q16)
+{
+    float gyro_sens;
+    long long gyro_sum[3] = {0, 0, 0};
+    short gyro_raw[3];
+    uint32_t sample_count = (DEFAULT_MPU_HZ * MPU6050_GYRO_BIAS_CALIBRATION_MS) / 1000U;
+    uint32_t sample_period_ms = 1000U / DEFAULT_MPU_HZ;
+
+    if (sample_count == 0U) sample_count = 1U;
+    if (sample_period_ms == 0U) sample_period_ms = 1U;
+
+    if (mpu_get_gyro_sens(&gyro_sens) || (gyro_sens <= 0.0f)) return -1;
+
+    vTaskDelay(pdMS_TO_TICKS(MPU6050_GYRO_BIAS_SETTLE_MS));
+
+    for (uint32_t i = 0; i < sample_count; ++i)
+    {
+        if (mpu_get_gyro_reg(gyro_raw, NULL)) return -1;
+
+        gyro_sum[0] += gyro_raw[0];
+        gyro_sum[1] += gyro_raw[1];
+        gyro_sum[2] += gyro_raw[2];
+
+        vTaskDelay(pdMS_TO_TICKS(sample_period_ms));
+    }
+
+    for (uint32_t i = 0; i < 3U; ++i)
+    {
+        float gyro_dps = ((float)gyro_sum[i] / (float)sample_count) / gyro_sens;
+        bias_q16[i] = (long)(gyro_dps * 65536.0f);
+    }
+
+    return 0;
+}
+
 void MPU6050_Init(void)
 {
     int result;
+    int gyro_bias_result;
+    long gyro_bias_q16[3] = {0, 0, 0};
     unsigned char accel_fsr;
     unsigned short gyro_rate, gyro_fsr;
 
@@ -373,6 +410,7 @@ void MPU6050_Init(void)
     result += mpu_get_sample_rate(&gyro_rate);
     result += mpu_get_gyro_fsr(&gyro_fsr);
     result += mpu_get_accel_fsr(&accel_fsr);
+    gyro_bias_result = (result == 0) ? mpu6050_calibrate_static_gyro_bias(gyro_bias_q16) : -1;
 
     /* Initialize HAL state variables. */
     memset(&hal, 0, sizeof(hal));
@@ -408,7 +446,7 @@ void MPU6050_Init(void)
      * DMP_FEATURE_SEND_RAW_GYRO: Add raw Data_Gyro data to the FIFO.
      * DMP_FEATURE_SEND_CAL_GYRO: Add calibrated Data_Gyro data to the FIFO. Cannot
      * be used in combination with DMP_FEATURE_SEND_RAW_GYRO.
-     */
+    */
     result += dmp_load_motion_driver_firmware();
     result += dmp_set_orientation(inv_orientation_matrix_to_scalar(gyro_orientation));
     result += dmp_register_tap_cb(tap_cb);
@@ -416,6 +454,7 @@ void MPU6050_Init(void)
     hal.dmp_features = DMP_FEATURE_6X_LP_QUAT | DMP_FEATURE_TAP | DMP_FEATURE_ANDROID_ORIENT |
                        DMP_FEATURE_SEND_RAW_ACCEL | DMP_FEATURE_SEND_CAL_GYRO | DMP_FEATURE_GYRO_CAL;
     result += dmp_enable_feature(hal.dmp_features);
+    if (gyro_bias_result == 0) result += dmp_set_gyro_bias(gyro_bias_q16);
     result += dmp_set_fifo_rate(DEFAULT_MPU_HZ);
     result += mpu_set_dmp_state(1);
     hal.dmp_on = 1;
