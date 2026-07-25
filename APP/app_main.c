@@ -27,8 +27,7 @@ TaskHandle_t wheel_task_handle;
 TaskHandle_t imu_task_handle;
 TaskHandle_t line_track_task_handle;
 
-uint16_t adc_value[8];
-bool adc_get_success;
+extern bool enable_line_track;
 
 int app_main() {
 
@@ -41,7 +40,15 @@ int app_main() {
   //SerialReceive(g_serial, revb_str, 8, 100, NULL);
   while(1)
   {
-    adc_get_success = GWGetState(adc_value);
+    if(!DL_GPIO_readPins(KEY3_PORT, KEY3_K1_PIN))
+    {
+      enable_line_track=1;
+    }
+    if(!DL_GPIO_readPins(KEY3_PORT, KEY3_K2_PIN))
+    {
+      enable_line_track=0;
+    }
+    //adc_get_success = GWGetState(adc_value);
     vTaskDelay(50);
   }
   

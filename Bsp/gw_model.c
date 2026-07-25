@@ -32,11 +32,12 @@ void GWModelInit() {
 }
 
 uint32_t GWGetState(uint16_t *value) {
+  const int sample_cnt=2;
   if ((k_gw_tracker_semphr == NULL) || (value == NULL)) {
     return 0;
   }
   uint16_t temp[8]={0};
-  for (int j = 0; j < 4; j++) {
+  for (int j = 0; j < sample_cnt; j++) {
     for (int i = 0; i < 8; i++) {
       switch_sensor_channel(i);
       vTaskDelay(pdMS_TO_TICKS(1)); // 等待电平稳定
@@ -46,7 +47,7 @@ uint32_t GWGetState(uint16_t *value) {
       if (xSemaphoreTake(k_gw_tracker_semphr, pdMS_TO_TICKS(5)) == pdFALSE) {
         return 0;
       }
-      temp[i] += DL_ADC12_getMemResult(ADC12_0_INST, DL_ADC12_MEM_IDX_0)/4;     //取均值
+      temp[i] += DL_ADC12_getMemResult(ADC12_0_INST, DL_ADC12_MEM_IDX_0)/sample_cnt;     //取均值
     }
   }
   memcpy(value,temp,sizeof(temp));

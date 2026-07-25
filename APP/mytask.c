@@ -30,7 +30,7 @@ bool mpu6050_success = false;
 
 // Chassis
 bool enable_dir_control = false;
-bool enabl_odometer = false;
+bool enabl_odometer = true;
 float exp_yaw = 0.0f; // 单位是度
 float dir_kp = 1.0f;
 
@@ -161,25 +161,38 @@ void update_is_line_gate(void) {
   }
 
   float current_gate = ((float)min_value + (float)max_value) * 0.5f;
-  float filtered_gate =
+
+  if(max_value-current_gate>200&&current_gate-min_value>200)    //如果差别足够大，才认为可以用来区分
+  {
+    float filtered_gate =
       (1.0f - IS_LINE_GATE_UPDATE_ALPHA) * (float)is_line_gate +
       IS_LINE_GATE_UPDATE_ALPHA * current_gate;
   is_line_gate = (uint16_t)(filtered_gate + 0.5f);
+  }
 }
 
-
+QueueHandle_t line_msg_queue;
+bool enable_line_track = false;
 void LineTrack(void *param) {
+  line_msg_queue=xQueueCreate(4, sizeof(uint32_t));
   TickType_t pxPreviousWakeTime = xTaskGetTickCount();
-  const float omega_weight[8] = {-2.0f, -1.0f, -0.4f, -0.15f,
-                                 0.15f,  0.4f,  1.0f,  2.0f};
+  const float omega_weight[8] = {-1.2f, -0.7f, -0.3f, -0.1f,
+                                 0.1f, 0.3f,  0.7f,  1.2f};
+  vTaskDelay(pdMS_TO_TICKS(3000));
 
+  for(int i=0;i<40;i++)   //现场采集2s环境光信息
+  {
+    adc_success = GWGetState(adc_value_group);
+    if(adc_success)
+      update_is_line_gate();
+    vTaskDelayUntil(&pxPreviousWakeTime, pdMS_TO_TICKS(50));
+  }
+  
   while (1) {
     adc_success = GWGetState(adc_value_group);
     if (adc_success) {
       float detected_omega = 0.0f;
       bool line_detected = false;
-
-      update_is_line_gate();
 
       for (int i = 0; i < 8; i++) {
         if (is_line(adc_value_group[i])) {
@@ -189,7 +202,13 @@ void LineTrack(void *param) {
       }
 
       if (line_detected) {
-        line_track_omega = detected_omega;
+        line_track_omega = 0.3*detected_omega+0.7*line_track_omega;
+      }
+      else {
+        if(line_track_omega>0.0f)
+          line_track_omega=1.0f;
+        if(line_track_omega<0.0f)
+          line_track_omega=-1.0f;
       }
       line_track_vel = LINE_TRACK_VEL;
     } else {
@@ -198,9 +217,16 @@ void LineTrack(void *param) {
     }
 
     // 操控底盘运动
-    enable_dir_control = false;
-    robot_exp_vel = line_track_vel;
-    robot_exp_omega = line_track_omega;
+
+    if (enable_line_track) {
+      enable_dir_control = false;
+      robot_exp_vel = line_track_vel;
+      robot_exp_omega = line_track_omega;
+    }
+    else {
+      robot_exp_vel = 0.0f;
+      robot_exp_omega = 0.0f;
+    }
 
     vTaskDelayUntil(&pxPreviousWakeTime, pdMS_TO_TICKS(50));
   }
