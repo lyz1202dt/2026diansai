@@ -27,7 +27,7 @@ TaskHandle_t wheel_task_handle;
 TaskHandle_t imu_task_handle;
 TaskHandle_t line_track_task_handle;
 
-float adc_value[8];
+uint16_t adc_value[8];
 bool adc_get_success;
 
 int app_main() {
@@ -38,7 +38,7 @@ int app_main() {
   xTaskCreate(LineTrack, "line_track", 128, NULL, 4, &line_track_task_handle);
   
   //SerialTransmit(g_serial, send_str, 6, send_done);
-  // SerialReceive(g_serial, revb_str, 8, 100, NULL);
+  //SerialReceive(g_serial, revb_str, 8, 100, NULL);
   while(1)
   {
     adc_get_success = GWGetState(adc_value);

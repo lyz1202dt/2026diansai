@@ -39,16 +39,17 @@ const ProjectConfig = scripting.addModule("/ti/project_config/ProjectConfig");
 /**
  * Write custom configuration values to the imported modules.
  */
-ADC121.$name                      = "ADC12_0";
-ADC121.enableDMA                  = false;
-ADC121.sampClkSrc                 = "DL_ADC12_CLOCK_ULPCLK";
-ADC121.enabledInterrupts          = ["DL_ADC12_INTERRUPT_MEM0_RESULT_LOADED"];
-ADC121.adcMem1chansel             = "DL_ADC12_INPUT_CHAN_1";
-ADC121.sampClkDiv                 = "DL_ADC12_CLOCK_DIVIDE_8";
-ADC121.sampleTime0                = "125ns";
-ADC121.peripheral.$assign         = "ADC1";
-ADC121.peripheral.adcPin0.$assign = "PA15";
-ADC121.adcPin0Config.$name        = "ti_driverlib_gpio_GPIOPinGeneric14";
+ADC121.$name               = "ADC12_0";
+ADC121.enableDMA           = false;
+ADC121.sampClkSrc          = "DL_ADC12_CLOCK_ULPCLK";
+ADC121.enabledInterrupts   = ["DL_ADC12_INTERRUPT_MEM0_RESULT_LOADED"];
+ADC121.adcMem1chansel      = "DL_ADC12_INPUT_CHAN_1";
+ADC121.sampClkDiv          = "DL_ADC12_CLOCK_DIVIDE_8";
+ADC121.adcMem2chansel      = "DL_ADC12_INPUT_CHAN_5";
+ADC121.adcMem0chansel      = "DL_ADC12_INPUT_CHAN_5";
+ADC121.sampleTime0         = "125us";
+ADC121.peripheral.$assign  = "ADC1";
+ADC121.adcPin5Config.$name = "ti_driverlib_gpio_GPIOPinGeneric14";
 
 Board.peripheral.swdioPin.$assign = "PA19";
 
@@ -140,16 +141,16 @@ GPIO6.associatedPins[3].polarity    = "RISE_FALL";
 GPIO6.associatedPins[3].ioStructure = "SD";
 GPIO6.associatedPins[3].pin.$assign = "PA22";
 
-GPIO7.$name                         = "MOTOR_PIN";
+GPIO7.$name                                       = "MOTOR_PIN";
 GPIO7.associatedPins.create(4);
-GPIO7.associatedPins[0].$name       = "M1A";
-GPIO7.associatedPins[0].pin.$assign = "PA12";
-GPIO7.associatedPins[1].$name       = "M1B";
-GPIO7.associatedPins[1].pin.$assign = "PA13";
-GPIO7.associatedPins[2].$name       = "M2A";
-GPIO7.associatedPins[2].pin.$assign = "PA14";
-GPIO7.associatedPins[3].$name       = "M2B";
-GPIO7.associatedPins[3].pin.$assign = "PA16";
+GPIO7.associatedPins[0].$name                     = "M1A";
+GPIO7.associatedPins[0].pin.$assign               = "PA12";
+GPIO7.associatedPins[1].$name                     = "M1B";
+GPIO7.associatedPins[1].pin.$assign               = "PA13";
+GPIO7.associatedPins[2].$name                     = "M2A";
+GPIO7.associatedPins[2].pin.$assign               = "PA14";
+GPIO7.associatedPins[3].$name                     = "M2B";
+GPIO7.associatedPins[3].pin.$assignAllowConflicts = "PA16";
 
 GPIO8.$name                         = "GW_ADDR_PIN";
 GPIO8.associatedPins.create(3);
@@ -307,9 +308,10 @@ ProjectConfig.genLibDrivers = true;
  * version of the tool will not impact the pinmux you originally saw.  These lines can be completely deleted in order to
  * re-solve from scratch.
  */
+ADC121.peripheral.adcPin5.$suggestSolution   = "PB18";
 Board.peripheral.$suggestSolution            = "DEBUGSS";
 Board.peripheral.swclkPin.$suggestSolution   = "PA20";
-GPIO1.associatedPins[0].pin.$suggestSolution = "PA0";
+GPIO1.associatedPins[0].pin.$suggestSolution = "PA15";
 SPI1.peripheral.sclkPin.$suggestSolution     = "PA17";
 SPI1.peripheral.mosiPin.$suggestSolution     = "PA18";
 SPI1.peripheral.misoPin.$suggestSolution     = "PB14";
