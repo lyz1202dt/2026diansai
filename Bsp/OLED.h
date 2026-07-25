@@ -2,7 +2,7 @@
  * SysConfig Configuration Steps:
  *   I2C:
  *     1. Add an I2C module.
- *     2. Name it as "I2C_I2C_OLED".
+ *     2. Name it as "OLED_I2C".
  *     3. Check the box "Enable Controller Mode".
  *     4. Set "Standard Bus Speed" to "Fast Mode (400kHz)". (optional)
  *     5. Set the pins according to your needs.
@@ -11,7 +11,8 @@
 #ifndef __I2C_OLED_H__
 #define __I2C_OLED_H__
 
-#include "SysConfig.h"
+#include "ti_msp_dl_config.h"
+#include <stdint.h>
 
 #define I2C_OLED_CMD  0 //写命令
 #define I2C_OLED_DATA 1 //写数据

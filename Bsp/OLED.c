@@ -10,11 +10,52 @@
 
 #include "OLED.h"
 #include "OLED_Font.h"
+#include <FreeRTOS.h>
+#include <semphr.h>
+#include <stdio.h>
+#include <stdarg.h>
+#include <task.h>
 
 /** @brief I2C通信超时时间（毫秒） */
 #define I2C_TIMEOUT_MS (10)
 
 #define OLED_ADDR      (0x3c)
+
+#define OLED_I2C_TIMEOUT_TICKS pdMS_TO_TICKS(I2C_TIMEOUT_MS)
+
+static SemaphoreHandle_t k_oled_i2c_semphr;
+static volatile int g_oled_i2c_status;
+
+static void oled_i2c_init_semphr(void)
+{
+    if (k_oled_i2c_semphr == NULL)
+    {
+        k_oled_i2c_semphr = xSemaphoreCreateBinary();
+    }
+
+    if (k_oled_i2c_semphr != NULL)
+    {
+        xSemaphoreTake(k_oled_i2c_semphr, 0);
+    }
+}
+
+static int oled_i2c_wait_idle(void)
+{
+    TickType_t start_tick = xTaskGetTickCount();
+
+    do
+    {
+        if (DL_I2C_getControllerStatus(OLED_I2C_INST) & DL_I2C_CONTROLLER_STATUS_IDLE)
+        {
+            return 0;
+        }
+
+        vTaskDelay(1);
+    } while ((xTaskGetTickCount() - start_tick) < OLED_I2C_TIMEOUT_TICKS);
+
+    I2C_OLED_i2c_sda_unlock();
+    return -1;
+}
 
 /**
  * @brief I2C_OLED显存格式说明
@@ -38,15 +79,15 @@
  */
 static int mspm0_i2c_disable(void)
 {
-    DL_I2C_reset(I2C_OLED_INST);
-    DL_GPIO_initDigitalOutput(GPIO_I2C_OLED_IOMUX_SCL);
-    DL_GPIO_initDigitalInputFeatures(GPIO_I2C_OLED_IOMUX_SDA,
+    DL_I2C_reset(OLED_I2C_INST);
+    DL_GPIO_initDigitalOutput(GPIO_OLED_I2C_IOMUX_SCL);
+    DL_GPIO_initDigitalInputFeatures(GPIO_OLED_I2C_IOMUX_SDA,
                                      DL_GPIO_INVERSION_DISABLE,
                                      DL_GPIO_RESISTOR_NONE,
                                      DL_GPIO_HYSTERESIS_DISABLE,
                                      DL_GPIO_WAKEUP_DISABLE);
-    DL_GPIO_clearPins(GPIO_I2C_OLED_SCL_PORT, GPIO_I2C_OLED_SCL_PIN);
-    DL_GPIO_enableOutput(GPIO_I2C_OLED_SCL_PORT, GPIO_I2C_OLED_SCL_PIN);
+    DL_GPIO_clearPins(GPIO_OLED_I2C_SCL_PORT, GPIO_OLED_I2C_SCL_PIN);
+    DL_GPIO_enableOutput(GPIO_OLED_I2C_SCL_PORT, GPIO_OLED_I2C_SCL_PIN);
     return 0;
 }
 
@@ -59,23 +100,23 @@ static int mspm0_i2c_disable(void)
  */
 static int mspm0_i2c_enable(void)
 {
-    DL_I2C_reset(I2C_OLED_INST);
-    DL_GPIO_initPeripheralInputFunctionFeatures(GPIO_I2C_OLED_IOMUX_SDA,
-                                                GPIO_I2C_OLED_IOMUX_SDA_FUNC,
+    DL_I2C_reset(OLED_I2C_INST);
+    DL_GPIO_initPeripheralInputFunctionFeatures(GPIO_OLED_I2C_IOMUX_SDA,
+                                                GPIO_OLED_I2C_IOMUX_SDA_FUNC,
                                                 DL_GPIO_INVERSION_DISABLE,
                                                 DL_GPIO_RESISTOR_NONE,
                                                 DL_GPIO_HYSTERESIS_DISABLE,
                                                 DL_GPIO_WAKEUP_DISABLE);
-    DL_GPIO_initPeripheralInputFunctionFeatures(GPIO_I2C_OLED_IOMUX_SCL,
-                                                GPIO_I2C_OLED_IOMUX_SCL_FUNC,
+    DL_GPIO_initPeripheralInputFunctionFeatures(GPIO_OLED_I2C_IOMUX_SCL,
+                                                GPIO_OLED_I2C_IOMUX_SCL_FUNC,
                                                 DL_GPIO_INVERSION_DISABLE,
                                                 DL_GPIO_RESISTOR_NONE,
                                                 DL_GPIO_HYSTERESIS_DISABLE,
                                                 DL_GPIO_WAKEUP_DISABLE);
-    DL_GPIO_enableHiZ(GPIO_I2C_OLED_IOMUX_SDA);
-    DL_GPIO_enableHiZ(GPIO_I2C_OLED_IOMUX_SCL);
-    DL_I2C_enablePower(I2C_OLED_INST);
-    SYSCFG_DL_I2C_OLED_init();
+    DL_GPIO_enableHiZ(GPIO_OLED_I2C_IOMUX_SDA);
+    DL_GPIO_enableHiZ(GPIO_OLED_I2C_IOMUX_SCL);
+    DL_I2C_enablePower(OLED_I2C_INST);
+    SYSCFG_DL_OLED_I2C_init();
     return 0;
 }
 
@@ -91,12 +132,12 @@ void I2C_OLED_i2c_sda_unlock(void)
     mspm0_i2c_disable();
     do
     {
-        DL_GPIO_clearPins(GPIO_I2C_OLED_SCL_PORT, GPIO_I2C_OLED_SCL_PIN);
-        Delay(1);
-        DL_GPIO_setPins(GPIO_I2C_OLED_SCL_PORT, GPIO_I2C_OLED_SCL_PIN);
-        Delay(1);
+        DL_GPIO_clearPins(GPIO_OLED_I2C_SCL_PORT, GPIO_OLED_I2C_SCL_PIN);
+        vTaskDelay(pdMS_TO_TICKS(1));
+        DL_GPIO_setPins(GPIO_OLED_I2C_SCL_PORT, GPIO_OLED_I2C_SCL_PIN);
+        vTaskDelay(pdMS_TO_TICKS(1));
 
-        if (DL_GPIO_readPins(GPIO_I2C_OLED_SDA_PORT, GPIO_I2C_OLED_SDA_PIN)) break;
+        if (DL_GPIO_readPins(GPIO_OLED_I2C_SDA_PORT, GPIO_OLED_I2C_SDA_PIN)) break;
     } while (++cycleCnt < 100);
     mspm0_i2c_enable();
 }
@@ -154,7 +195,9 @@ void I2C_OLED_DisplayTurn(uint8_t i)
 void I2C_OLED_WR_Byte(uint8_t dat, uint8_t mode)
 {
     unsigned char ptr[2];
-    unsigned long start, cur;
+
+    if (k_oled_i2c_semphr == NULL) oled_i2c_init_semphr();
+    if (k_oled_i2c_semphr == NULL) return;
 
     if (mode)
     {
@@ -166,22 +209,58 @@ void I2C_OLED_WR_Byte(uint8_t dat, uint8_t mode)
         ptr[0] = 0x00;
         ptr[1] = dat;
     }
-    start = Sys_GetTick();
 
-    DL_I2C_fillControllerTXFIFO(I2C_OLED_INST, ptr, 2);
-    DL_I2C_clearInterruptStatus(I2C_OLED_INST, DL_I2C_INTERRUPT_CONTROLLER_TX_DONE);
-    while (!(DL_I2C_getControllerStatus(I2C_OLED_INST) & DL_I2C_CONTROLLER_STATUS_IDLE));
-    DL_I2C_startControllerTransfer(I2C_OLED_INST, 0x3C, DL_I2C_CONTROLLER_DIRECTION_TX, 2);
+    xSemaphoreTake(k_oled_i2c_semphr, 0);
+    g_oled_i2c_status = 0;
+    DL_I2C_fillControllerTXFIFO(OLED_I2C_INST, ptr, 2);
+    DL_I2C_clearInterruptStatus(OLED_I2C_INST,
+                                DL_I2C_INTERRUPT_CONTROLLER_TX_DONE |
+                                DL_I2C_INTERRUPT_CONTROLLER_NACK |
+                                DL_I2C_INTERRUPT_CONTROLLER_ARBITRATION_LOST);
 
-    while (!DL_I2C_getRawInterruptStatus(I2C_OLED_INST, DL_I2C_INTERRUPT_CONTROLLER_TX_DONE))
+    if (oled_i2c_wait_idle() != 0) return;
+
+    DL_I2C_startControllerTransfer(OLED_I2C_INST, OLED_ADDR, DL_I2C_CONTROLLER_DIRECTION_TX, 2);
+
+    if (xSemaphoreTake(k_oled_i2c_semphr, OLED_I2C_TIMEOUT_TICKS) == pdFALSE)
     {
-        cur = Sys_GetTick();
-        if (cur >= (start + I2C_TIMEOUT_MS))
-        {
-            I2C_OLED_i2c_sda_unlock();
-            break;
-        }
+        I2C_OLED_i2c_sda_unlock();
+        return;
     }
+
+    if (g_oled_i2c_status != 0)
+    {
+        I2C_OLED_i2c_sda_unlock();
+    }
+}
+
+void OLED_I2C_INST_IRQHandler(void)
+{
+    BaseType_t pxHigherPriorityTaskWoken = pdFALSE;
+
+    switch (DL_I2C_getPendingInterrupt(OLED_I2C_INST))
+    {
+        case DL_I2C_IIDX_CONTROLLER_TX_DONE:
+            if (k_oled_i2c_semphr != NULL)
+            {
+                xSemaphoreGiveFromISR(k_oled_i2c_semphr, &pxHigherPriorityTaskWoken);
+            }
+            break;
+
+        case DL_I2C_IIDX_CONTROLLER_NACK:
+        case DL_I2C_IIDX_CONTROLLER_ARBITRATION_LOST:
+            g_oled_i2c_status = -1;
+            if (k_oled_i2c_semphr != NULL)
+            {
+                xSemaphoreGiveFromISR(k_oled_i2c_semphr, &pxHigherPriorityTaskWoken);
+            }
+            break;
+
+        default:
+            break;
+    }
+
+    portYIELD_FROM_ISR(pxHigherPriorityTaskWoken);
 }
 
 /**
@@ -258,7 +337,7 @@ void I2C_OLED_Clear(void)
  */
 void OLED_ShowChar(uint8_t x, uint8_t y, uint8_t sizey, uint8_t chr)
 {
-    uint8_t c = 0, sizex = sizey / 2;
+    uint8_t c = 0;
     uint16_t i = 0, size1;
     if (sizey == 8)
     {
@@ -380,7 +459,8 @@ uint16_t OLED_Printf(uint8_t x, uint8_t y, uint8_t sizey, const char *format, ..
     uint16_t len = 0;
     len = vsprintf(Buffer, format, args);
     va_end(args);
-    OLED_ShowString(x, y, sizey, Buffer);
+    OLED_ShowString(x, y, sizey, (uint8_t *)Buffer);
+    return len;
 }
 
 /**
@@ -394,9 +474,12 @@ uint16_t OLED_Printf(uint8_t x, uint8_t y, uint8_t sizey, const char *format, ..
  */
 void OLED_Init(void)
 {
-    if (DL_I2C_getSDAStatus(I2C_OLED_INST) == DL_I2C_CONTROLLER_SDA_LOW) I2C_OLED_i2c_sda_unlock();
+    oled_i2c_init_semphr();
+    NVIC_EnableIRQ(OLED_I2C_INST_INT_IRQN);
 
-    Delay(200);
+    if (DL_I2C_getSDAStatus(OLED_I2C_INST) == DL_I2C_CONTROLLER_SDA_LOW) I2C_OLED_i2c_sda_unlock();
+
+    vTaskDelay(pdMS_TO_TICKS(200));
 
     I2C_OLED_WR_Byte(0xAE, I2C_OLED_CMD); //--turn off I2C_OLED panel
     I2C_OLED_WR_Byte(0x00, I2C_OLED_CMD); //---set low column address
