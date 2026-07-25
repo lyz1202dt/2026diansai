@@ -139,24 +139,47 @@ void WheelTask(void *param) {
 float line_track_omega = 0.0f;
 float line_track_vel = 0.0f;
 uint16_t adc_value_group[8];
-uint16_t is_line_gate = 2000.0f;
+uint16_t is_line_gate = 800;
 bool adc_success = false;
 
 #define LINE_TRACK_VEL 0.10f
+#define IS_LINE_GATE_UPDATE_ALPHA 0.05f
 
-static bool is_line(uint16_t value) { return value > is_line_gate; }
+static bool is_line(uint16_t value) { return value < is_line_gate; }
+
+void update_is_line_gate(void) {
+  uint16_t min_value = adc_value_group[0];
+  uint16_t max_value = adc_value_group[0];
+
+  for (int i = 1; i < 8; i++) {
+    if (adc_value_group[i] < min_value) {
+      min_value = adc_value_group[i];
+    }
+    if (adc_value_group[i] > max_value) {
+      max_value = adc_value_group[i];
+    }
+  }
+
+  float current_gate = ((float)min_value + (float)max_value) * 0.5f;
+  float filtered_gate =
+      (1.0f - IS_LINE_GATE_UPDATE_ALPHA) * (float)is_line_gate +
+      IS_LINE_GATE_UPDATE_ALPHA * current_gate;
+  is_line_gate = (uint16_t)(filtered_gate + 0.5f);
+}
 
 
 void LineTrack(void *param) {
   TickType_t pxPreviousWakeTime = xTaskGetTickCount();
-  const float omega_weight[8] = {-1.0f, -0.6f, -0.2f, -0.1f,
-                                 0.1f,  0.2f,  0.6f,  1.0f};
+  const float omega_weight[8] = {-2.0f, -1.0f, -0.4f, -0.15f,
+                                 0.15f,  0.4f,  1.0f,  2.0f};
 
   while (1) {
     adc_success = GWGetState(adc_value_group);
     if (adc_success) {
       float detected_omega = 0.0f;
       bool line_detected = false;
+
+      update_is_line_gate();
 
       for (int i = 0; i < 8; i++) {
         if (is_line(adc_value_group[i])) {
