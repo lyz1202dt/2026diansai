@@ -13,7 +13,7 @@ void uart_SendCmd(uint8_t *cmd, uint32_t size)
         return;
     }
 
-    (void) SerialTransmit(zdt_serial_handle, cmd, (uint16_t) size, NULL);
+    (void) SerialTransmit(zdt_serial_handle, cmd, (uint16_t) size);
 }
 
 void uart_Receive_Data(uint8_t *rxCmd, uint8_t exp_cnt,uint8_t *rxCount)
@@ -28,7 +28,7 @@ void uart_Receive_Data(uint8_t *rxCmd, uint8_t exp_cnt,uint8_t *rxCount)
         return;
     }
 
-    received = SerialReceive(zdt_serial_handle, rxCmd, exp_cnt,10,NULL);
+    received = SerialReceive(zdt_serial_handle, rxCmd, exp_cnt, 10);
     if (received < 0) {
         *rxCount = 0;
         return;

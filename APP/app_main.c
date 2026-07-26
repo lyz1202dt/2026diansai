@@ -47,13 +47,11 @@ int app_main() {
   //OLED_Init();
   
   
-  //SerialTransmit(zdt_serial, send_str, 6, NULL);
-  //SerialReceive(zdt_serial, recv_str, 8, 100, NULL);
-  uint8_t send_str_[5]={1,2,3,4,5};
+  //SerialTransmit(zdt_serial, send_str, 6);
+  //SerialReceive(zdt_serial, recv_str, 8, 100);
   BaseType_t last_wake_time=xTaskGetTickCount();
   while(1)
   {
-    SerialTransmit(zdt_serial, send_str_, 5,NULL);
     // if(!DL_GPIO_readPins(KEY3_PORT, KEY3_K1_PIN))   //开始巡线
     // {
     //   OLED_Printf(90, 0, 8, "k3-1");
