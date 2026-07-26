@@ -26,6 +26,7 @@
 TaskHandle_t wheel_task_handle;
 TaskHandle_t imu_task_handle;
 TaskHandle_t line_track_task_handle;
+TaskHandle_t zdt_driver_task_handle;
 
 extern bool enable_line_track;
 extern float cur_robot_pos_x, cur_robot_pos_y;
@@ -41,7 +42,7 @@ int app_main() {
   xTaskCreate(WheelTask, "wheel_task", 128, NULL, 5, &wheel_task_handle);
   xTaskCreate(IMUTask, "imu_task", 256, NULL, 5, &imu_task_handle);
   xTaskCreate(LineTrack, "line_track", 128, NULL, 4, &line_track_task_handle);
-
+  xTaskCreate(ZDTDriver,"zdt_driver",128,NULL, 4,&zdt_driver_task_handle);
   OLED_Init();
   
   
@@ -50,12 +51,12 @@ int app_main() {
   BaseType_t last_wake_time=xTaskGetTickCount();
   while(1)
   {
-    if(!DL_GPIO_readPins(KEY3_PORT, KEY3_K1_PIN))
+    if(!DL_GPIO_readPins(KEY3_PORT, KEY3_K1_PIN))   //开始巡线
     {
       OLED_Printf(90, 0, 8, "k3-1");
       enable_line_track=1;
     }
-    else if(!DL_GPIO_readPins(KEY3_PORT, KEY3_K2_PIN))
+    else if(!DL_GPIO_readPins(KEY3_PORT, KEY3_K2_PIN))  //停止巡线
     {
       OLED_Printf(90, 0, 8, "k3-2");
       enable_line_track=0;

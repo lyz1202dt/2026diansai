@@ -1,5 +1,6 @@
 #include "mytask.h"
 
+#include "portmacro.h"
 #include "projdefs.h"
 #include "ti/devices/msp/m0p/mspm0g350x.h"
 #include "ti_msp_dl_config.h"
@@ -17,6 +18,8 @@
 #include "Bsp/motor.h"
 #include "Bsp/mpu6050.h"
 #include "Driver/uart/uart.h"
+#include "Driver/zdt/Emm_V5.h"
+#include "Driver/zdt/uartport.h"
 #include "Lib/PID.h"
 #include <ti/driverlib/dl_dma.h>
 
@@ -230,4 +233,22 @@ void LineTrack(void *param) {
 
     vTaskDelayUntil(&pxPreviousWakeTime, pdMS_TO_TICKS(50));
   }
+}
+
+
+uint8_t zdt_recv_buf[32];
+float joint_cur_pos;
+void ZDTDriver(void* param)
+{
+    //初始化张大头串口环境
+    MakeZDTSerialEnv(zdt_serial);
+    BaseType_t last_wake_time=xTaskGetTickCount();
+    while(1)
+    {
+        Emm_V5_Read_Sys_Params(0x01, S_CPOS);
+        Emm_V5_Receive_Data(zdt_recv_buf, &zdt_recv_cnt);
+        Emm_V5_GetPos(0x01,zdt_recv_buf,&joint_cur_pos);
+
+        vTaskDelayUntil(&last_wake_time,pdMS_TO_TICKS(10));
+    }
 }

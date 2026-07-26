@@ -11,5 +11,6 @@
 void WheelTask(void *param);
 void IMUTask(void *param);
 void LineTrack(void* param);
+void ZDTDriver(void* param);
 
 #endif
