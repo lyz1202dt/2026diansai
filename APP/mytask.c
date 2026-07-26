@@ -236,8 +236,16 @@ void LineTrack(void *param) {
 }
 
 
+#define SetMotorVel(id,omega) Emm_V5_Vel_Control(id, omega>=0.0f?0:1, (uint16_t)(ABS(omega*(60.0f/(2.0f*3.14159265f)))), 0, 0)
+
 uint8_t zdt_recv_buf[32];
+uint8_t zdt_recv_cnt;
 float joint_cur_pos;
+
+float exp_omega=0.0f;
+
+uint8_t send_str[8]={3,54,107,4,5,6,7,8};
+// uint8_t recv_str[8]={0};
 void ZDTDriver(void* param)
 {
     //初始化张大头串口环境
@@ -245,10 +253,16 @@ void ZDTDriver(void* param)
     BaseType_t last_wake_time=xTaskGetTickCount();
     while(1)
     {
-        Emm_V5_Read_Sys_Params(0x01, S_CPOS);
-        Emm_V5_Receive_Data(zdt_recv_buf, &zdt_recv_cnt);
-        Emm_V5_GetPos(0x01,zdt_recv_buf,&joint_cur_pos);
+        //Emm_V5_Read_Sys_Params(0x03, S_CPOS);
+        //uart_Receive_Data(zdt_recv_buf, 8,&zdt_recv_cnt);
+        //SerialTransmit(zdt_serial, send_str, 5,NULL);
+        //Emm_V5_GetPos(0x03,zdt_recv_buf,&joint_cur_pos);
+        SerialReceive(zdt_serial, zdt_recv_buf, 8, 10,NULL);
 
+        //SetMotorVel(0x03,exp_omega/*joint_target[0].omega+joint1_pid.pid_out*/);
+        //uart_Receive_Data(zdt_recv_buf,4, &zdt_recv_cnt);
+        //SerialTransmit(zdt_serial, send_str, 6, NULL);
+        //SerialReceive(zdt_serial, recv_str, 8, 100, NULL);
         vTaskDelayUntil(&last_wake_time,pdMS_TO_TICKS(10));
     }
 }

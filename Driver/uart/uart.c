@@ -806,6 +806,7 @@ int SerialTransmit(SerialHandle_t* handle, uint8_t *data, uint16_t size,
             } else {
                 serial_disable_tx_it(handle->hardware);
             }
+            (void) serial_sem_take(handle->tx_sem, -1);
             return size;
 
         /* DMA 模式：配置 DMA 传输 */
@@ -839,6 +840,7 @@ int SerialTransmit(SerialHandle_t* handle, uint8_t *data, uint16_t size,
             DL_DMA_setTransferSize(DMA, handle->dma_tx_ch, size);
             DL_DMA_enableChannel(DMA, handle->dma_tx_ch);
 
+            (void) serial_sem_take(handle->tx_sem, -1);
             return size;
         }
 

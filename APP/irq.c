@@ -23,6 +23,12 @@ void UART_0_INST_IRQHandler(void) {
     SerialIRQ(g_serial);
 }
 
+
+void UART_1_INST_IRQHandler(void) {
+    SerialIRQ(zdt_serial);
+}
+
+
 void GROUP1_IRQHandler(void) {
   switch (DL_Interrupt_getPendingGroup(DL_INTERRUPT_GROUP_1)) {
   case ENCODER_PIN_GPIOB_INT_IIDX: {
