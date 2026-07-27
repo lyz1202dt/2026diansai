@@ -15,13 +15,19 @@
 #include "Bsp/gw_model.h"
 #include "Bsp/OLED.h"
 #include <ti/driverlib/dl_dma.h>
-#include "Lib/PID.h"
+#include "Lib/pid/PID.h"
 
 #include "config.h"
 
 void UART_0_INST_IRQHandler(void) {
     SerialIRQ(g_serial);
 }
+
+
+void UART_1_INST_IRQHandler(void) {
+    SerialIRQ(zdt_serial);
+}
+
 
 void GROUP1_IRQHandler(void) {
   switch (DL_Interrupt_getPendingGroup(DL_INTERRUPT_GROUP_1)) {

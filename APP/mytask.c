@@ -1,5 +1,6 @@
 #include "mytask.h"
 
+#include "portmacro.h"
 #include "projdefs.h"
 #include "ti/devices/msp/m0p/mspm0g350x.h"
 #include "ti_msp_dl_config.h"
@@ -10,6 +11,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <task.h>
+#include <math.h>
 
 /* 使用 driverlib 的 DMA 接口 */
 #include "Bsp/OLED.h"
@@ -17,7 +19,9 @@
 #include "Bsp/motor.h"
 #include "Bsp/mpu6050.h"
 #include "Driver/uart/uart.h"
-#include "Lib/PID.h"
+#include "Driver/zdt/Emm_V5.h"
+#include "Driver/zdt/uartport.h"
+#include "Lib/pid/PID.h"
 #include <ti/driverlib/dl_dma.h>
 
 #include "config.h"
@@ -229,5 +233,51 @@ void LineTrack(void *param) {
     }
 
     vTaskDelayUntil(&pxPreviousWakeTime, pdMS_TO_TICKS(50));
+  }
+}
+
+
+#define SetMotorVel(id,omega) Emm_V5_Vel_Control(id, omega>=0.0f?0:1, (uint16_t)(ABS(omega*(60.0f/(2.0f*3.14159265f)))), 0, 0)
+
+uint8_t zdt_recv_buf[32];
+uint8_t zdt_recv_cnt;
+float joint_cur_pos;
+
+float exp_omega=0.0f;
+
+void ZDTDriver(void* param)
+{
+    //初始化张大头串口环境
+    MakeZDTSerialEnv(zdt_serial);
+    BaseType_t last_wake_time=xTaskGetTickCount();
+    while(1)
+    {
+        Emm_V5_Read_Sys_Params(0x03, S_CPOS);
+        uart_Receive_Data(zdt_recv_buf, 8,&zdt_recv_cnt);
+        Emm_V5_GetPos(0x03,zdt_recv_buf,&joint_cur_pos);
+
+        SetMotorVel(0x03,exp_omega/*joint_target[0].omega+joint1_pid.pid_out*/);
+        uart_Receive_Data(zdt_recv_buf,4, &zdt_recv_cnt);
+        vTaskDelayUntil(&last_wake_time,pdMS_TO_TICKS(10));
+    }
+}
+
+
+char vofa_data_buffer[128];
+uint16_t current_vofa_data_size=1;
+float vofa_value[3];
+void VOFA_Task(void* param)
+{
+  int x=0;
+  TickType_t last_wake_time=xTaskGetTickCount();
+  while(1)
+  {
+    vofa_value[0]=2.0*sin(x*0.01)+0.5*sin(3.1*x*0.01);
+    vofa_value[1]=3.0*sin(2.0*x*0.01)+0.2*sin(0.5*x*0.01);
+    vofa_value[2]=0.2*sin(5.0*x*0.01)+0.2*sin(1.6*x*0.01);
+    sprintf(vofa_data_buffer,"%.3f,%.3f,%.3f\n",vofa_value[0],vofa_value[1],vofa_value[2]);
+    SerialTransmit(g_serial,  vofa_data_buffer, strlen(vofa_data_buffer));
+    vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(10));
+    x=(x+1)%1000;
   }
 }
