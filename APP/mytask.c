@@ -26,7 +26,8 @@
 
 #include "config.h"
 
-// 寻迹模块
+//
+extern float vofa_value[4];
 
 // IMU
 float mpu6050_yaw;
@@ -135,6 +136,11 @@ void WheelTask(void *param) {
       cur_robot_pos_x += vx * WHEEL_TASK_PERIOD_S;
       cur_robot_pos_y += vy * WHEEL_TASK_PERIOD_S;
     }
+
+    vofa_value[0]=m1_cur_omega;
+    vofa_value[1]=m1_exp_omega;
+    vofa_value[2]=m2_cur_omega;
+    vofa_value[3]=m2_exp_omega;
 
     vTaskDelayUntil(&pxPreviousWakeTime, pdMS_TO_TICKS(5));
   }
@@ -265,17 +271,14 @@ void ZDTDriver(void* param)
 
 char vofa_data_buffer[128];
 uint16_t current_vofa_data_size=1;
-float vofa_value[3];
+float vofa_value[4];
 void VOFA_Task(void* param)
 {
   int x=0;
   TickType_t last_wake_time=xTaskGetTickCount();
   while(1)
   {
-    vofa_value[0]=2.0*sin(x*0.01)+0.5*sin(3.1*x*0.01);
-    vofa_value[1]=3.0*sin(2.0*x*0.01)+0.2*sin(0.5*x*0.01);
-    vofa_value[2]=0.2*sin(5.0*x*0.01)+0.2*sin(1.6*x*0.01);
-    sprintf(vofa_data_buffer,"%.3f,%.3f,%.3f\n",vofa_value[0],vofa_value[1],vofa_value[2]);
+    sprintf(vofa_data_buffer,"%.3f,%.3f,%.3f,%.3f\n",vofa_value[0],vofa_value[1],vofa_value[2],vofa_value[3]);
     SerialTransmit(g_serial,  vofa_data_buffer, strlen(vofa_data_buffer));
     vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(10));
     x=(x+1)%1000;
