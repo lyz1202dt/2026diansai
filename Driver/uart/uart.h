@@ -34,6 +34,8 @@ typedef enum {
 
 /* 回调函数类型定义 */
 typedef void (*ErrorCb)(int err_code, void* param);
+typedef void (*RecvCb)(uint8_t *data, uint16_t size, void* param);
+typedef void (*SendDoneCb)(void* param);
 
 /* 串口句柄结构体 */
 typedef struct{
@@ -43,17 +45,25 @@ typedef struct{
     uint16_t send_buffer_size;
     uint16_t recv_buffer_size;
     uint16_t tx_length;          /* 本次发送长度 */
-    volatile uint16_t tx_index;  /* 当前发送索引 */
-    volatile uint16_t recv_count;/* 当前接收计数 */
+    uint16_t tx_index;           /* 当前发送索引 */
+    uint16_t recv_count;        /* 当前接收计数 */
     uint16_t recv_expected;      /* 本次接收目标长度 */
-
-    SerialMode_t mode;           /* 当前工作模式 */
-    volatile SerialState_t tx_state; /* 发送状态 */
-    volatile SerialState_t rx_state; /* 接收状态 */
-    SemaphoreHandle_t tx_sem;    /* 发送完成信号量 */
-    SemaphoreHandle_t rx_sem;    /* 接收完成信号量 */
-    ErrorCb error_cb;            /* 错误回调 */
-    void *param;                 /* 用户参数 */
+    SerialMode_t mode;
+    ErrorCb error_cb;
+    RecvCb recv_cb;
+    SendDoneCb tx_done_cb;
+    void* param;
+    SemaphoreHandle_t rx_sem;   /* 接收完成信号量 */
+    SemaphoreHandle_t tx_sem;   /* 发送完成信号量 */
+    uint8_t dma_rx_ch;          /* DMA 接收通道 */
+    uint8_t dma_tx_ch;          /* DMA 发送通道 */
+    volatile bool rx_wait_idle;
+    volatile bool rx_using_dma;
+    volatile bool rx_done;
+    volatile bool tx_done;
+    volatile SerialState_t gState;   /* TX / 全局发送状态 */
+    volatile SerialState_t rxState;  /* RX 状态 */
+    volatile uint32_t error_code;    /* 最近一次累计错误码 */
 } SerialHandle_t;
 
 /**
@@ -71,10 +81,11 @@ SerialHandle_t* SerialInit(UART_Regs *hw_uart, uint8_t mode, ErrorCb error_cb, v
  * @param handle 串口句柄
  * @param data 发送数据指针
  * @param size 发送数据长度
+ * @param tx_done_cb 本次发送完成回调，仅在 IT/DMA 模式发送完成后调用一次
  * @return 发送的字节数，或错误码
- * @note 函数会阻塞直到发送全部完成，在发送完成中断中使用二值信号量唤醒后函数返回
  */
-int SerialTransmit(SerialHandle_t* handle, uint8_t *data, uint16_t size);
+int SerialTransmit(SerialHandle_t* handle, uint8_t *data, uint16_t size,
+                   SendDoneCb tx_done_cb);
 
 /**
  * @brief 接收定长数据 (流式接收)
@@ -82,16 +93,37 @@ int SerialTransmit(SerialHandle_t* handle, uint8_t *data, uint16_t size);
  * @param data 接收缓冲区
  * @param size 要接收的长度
  * @param timeout 超时时间 (ms)，-1 表示无限等待
+ * @param rx_done_cb 本次接收完成回调，接收成功完成后调用一次
  * @return 实际接收的字节数，或错误码
- * @note 函数会阻塞直到接收到指定个数的数字，或者接收超时，在接收完成中断中使用二值信号量唤醒后函数返回。或者提前因为超时返回
  */
-int SerialReceive(SerialHandle_t* handle, uint8_t *data, uint16_t size,int timeout);
+int SerialReceive(SerialHandle_t* handle, uint8_t *data, uint16_t size,
+                  int timeout, RecvCb rx_done_cb);
+
+/**
+ * @brief 接收不定长数据 (由硬件空闲事件判定一帧结束)
+ * @param handle 串口句柄
+ * @param data 接收缓冲区
+ * @param max_size 接收缓冲区最大长度
+ * @param rx_done_cb 本次接收完成回调，接收成功完成后调用一次
+ * @return 实际接收的字节数，或错误码
+ */
+int SerialReceiveIDLE(SerialHandle_t* handle, uint8_t *data, uint16_t max_size,
+                      RecvCb rx_done_cb);
 
 /**
  * @brief UART 中断处理函数 (需要在 UART ISR 中调用)
  * @param handle 串口句柄
  */
 void SerialIRQ(SerialHandle_t* handle);
+
+/**
+ * @brief 配置 DMA 通道 (仅在 DMA 模式下需要调用)
+ * @param handle 串口句柄
+ * @param dma_tx_ch DMA TX 通道号
+ * @param dma_rx_ch DMA RX 通道号
+ * @return 错误码
+ */
+int SerialConfigDMA(SerialHandle_t* handle, uint8_t dma_tx_ch, uint8_t dma_rx_ch);
 
 /**
  * @brief 反初始化串口，释放资源

@@ -1,22 +1,30 @@
 #include "uartport.h"
 
-static SerialHandle_t *zdt_serial_handle;
+static QueueHandle_t zdt_uart_send_semaphore;
+
+static  SerialHandle_t *zdt_serial_handle;
 
 void MakeZDTSerialEnv( SerialHandle_t *handle)
 {
-    zdt_serial_handle = handle;
+    zdt_uart_send_semaphore=xSemaphoreCreateBinary();
+    zdt_serial_handle=handle;
+}
+
+static void send_notify_cb(void* param)
+{
+    BaseType_t temp;
+    xSemaphoreGiveFromISR(zdt_uart_send_semaphore,&temp);
+    portYIELD_FROM_ISR(temp);
 }
 
 void uart_SendCmd(uint8_t *cmd, uint32_t size)
 {
-    if ((cmd == NULL) || (zdt_serial_handle == NULL) || (size == 0U)) {
-        return;
-    }
-
-    (void) SerialTransmit(zdt_serial_handle, cmd, (uint16_t) size);
+    xSemaphoreTake(zdt_uart_send_semaphore,0);
+    SerialTransmit(zdt_serial_handle, cmd, size, send_notify_cb);
+    xSemaphoreTake(zdt_uart_send_semaphore,portMAX_DELAY);
 }
 
-void uart_Receive_Data(uint8_t *rxCmd, uint8_t exp_cnt,uint8_t *rxCount)
+void uart_Receive_Data(uint8_t *rxCmd, uint8_t *rxCount)
 {
     int received;
 
@@ -28,7 +36,7 @@ void uart_Receive_Data(uint8_t *rxCmd, uint8_t exp_cnt,uint8_t *rxCount)
         return;
     }
 
-    received = SerialReceive(zdt_serial_handle, rxCmd, exp_cnt, 10);
+    received = SerialReceive(zdt_serial_handle, rxCmd, 8,10,NULL);
     if (received < 0) {
         *rxCount = 0;
         return;
