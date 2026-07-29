@@ -59,8 +59,6 @@ int app_main() {
   xTaskCreate(K230RecvTask,"k230_recv",256,NULL, 4,&k230_recv_task_handle);
   xTaskCreate(TestTask, "test_task",128, NULL, 2, &test_task_handle);
   xTaskCreate(VOFA_Task,"vofa",512,NULL, 1,&vofa_comm_task_handle);
-  //xTaskCreate()TestTask
-  
   
   
   //SerialTransmit(zdt_serial, send_str, 6);
@@ -116,7 +114,6 @@ int app_main() {
     }
     else {
       OLED_Printf(80, 0, 8, "     ");
-      current_select_task_id=0;
     }
     //OLED
     //OLED_Printf(0, 10, 8, "pos=(%.3f,%.3f)   ", cur_robot_pos_x,cur_robot_pos_y);

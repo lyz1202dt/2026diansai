@@ -3,8 +3,7 @@
 
 #include <stdint.h>
 
-void GWModelInit();
 
-uint32_t GWGetState(uint16_t *value);
+uint8_t GWGetState();
 
 #endif

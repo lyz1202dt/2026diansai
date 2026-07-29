@@ -169,83 +169,38 @@ void WheelTask(void *param) {
   }
 }
 
-float line_track_omega = 0.0f;
-float line_track_vel = 0.0f;
-uint16_t adc_value_group[8];
-uint16_t is_line_gate = 800;
-bool adc_success = false;
 
-float kExpTrackVel=0.10f;
-#define IS_LINE_GATE_UPDATE_ALPHA 0.05f
-
-bool is_line(uint16_t value) { return value < is_line_gate; }
-
-void update_is_line_gate(void) {
-  uint16_t min_value = adc_value_group[0];
-  uint16_t max_value = adc_value_group[0];
-
-  for (int i = 1; i < 8; i++) {
-    if (adc_value_group[i] < min_value) {
-      min_value = adc_value_group[i];
-    }
-    if (adc_value_group[i] > max_value) {
-      max_value = adc_value_group[i];
-    }
-  }
-
-  float current_gate = ((float)min_value + (float)max_value) * 0.5f;
-
-  if(max_value-current_gate>200&&current_gate-min_value>200)    //如果差别足够大，才认为可以用来区分
-  {
-    float filtered_gate =
-      (1.0f - IS_LINE_GATE_UPDATE_ALPHA) * (float)is_line_gate +
-      IS_LINE_GATE_UPDATE_ALPHA * current_gate;
-  is_line_gate = (uint16_t)(filtered_gate + 0.5f);
-  }
+static bool is_line(uint8_t index,uint8_t value)
+{
+  return ((~value)>>index)&0x01;
 }
 
+float line_track_omega = 0.0f;
+float line_track_vel = 0.0f;
+
+float kExpTrackVel=0.10f;
+
+
+bool line_detected=false;
 bool enable_line_track = false;
+uint8_t line_trace_result;
 void LineTrack(void *param) {
   TickType_t pxPreviousWakeTime = xTaskGetTickCount();
   const float omega_weight[8] = {-1.2f, -0.7f, -0.3f, -0.1f,
                                  0.1f, 0.3f,  0.7f,  1.2f};
-  vTaskDelay(pdMS_TO_TICKS(3000));
 
-  for(int i=0;i<40;i++)   //现场采集2s环境光信息
-  {
-    adc_success = GWGetState(adc_value_group);
-    if(adc_success)
-      update_is_line_gate();
-    vTaskDelayUntil(&pxPreviousWakeTime, pdMS_TO_TICKS(50));
-  }
-  
   while (1) {
-    adc_success = GWGetState(adc_value_group);
-    if (adc_success) {
-      float detected_omega = 0.0f;
-      bool line_detected = false;
+    line_trace_result=GWGetState();
 
+    float detected_omega=0.0f;
       for (int i = 0; i < 8; i++) {
-        if (is_line(adc_value_group[i])) {
+        if (is_line(i,line_trace_result)) {
           detected_omega += omega_weight[i];
-          line_detected = true;
         }
       }
 
-      if (line_detected) {
-        line_track_omega = 0.3*detected_omega+0.7*line_track_omega;
-      }
-      else {
-        if(line_track_omega>0.0f)
-          line_track_omega=1.0f;
-        if(line_track_omega<0.0f)
-          line_track_omega=-1.0f;
-      }
+      line_track_omega = 0.3*detected_omega+0.7*line_track_omega;
       line_track_vel = kExpTrackVel;
-    } else {
-      line_track_omega = 0.0f;
-      line_track_vel = 0.0f;
-    }
 
     // 操控底盘运动
 
@@ -481,6 +436,7 @@ void K230RecvTask(void* param)
 }
 
 
+
 float task1_finished_gate_distance=3.0f;
 float task1_distance_offset;
 TickType_t task1_start_time;
@@ -503,7 +459,7 @@ void Task1(void* parma)
 
 
     kExpTrackVel=0.1f;      //缓慢行驶直到遇到停止线
-    while(!(is_line(adc_value_group[2])&&is_line(adc_value_group[3])&&is_line(adc_value_group[4])&&is_line(adc_value_group[5])))      //行驶到终点前附近
+    while(line_trace_result&0x3C!=0x3C)      //行驶到终点前附近0011 1100
     {
         vTaskDelayUntil(&pxPreviousWakeTime, pdMS_TO_TICKS(30));
     }
@@ -586,12 +542,13 @@ float test_ball_exp_pos=0.0f;
 void TestTask(void* param)
 {
     vTaskDelay(2000);
-    while(1)
-    {
-        enable_ball_pos_control=true;
+    enable_ball_pos_control=true;
         enable_line_track=false;
         car_is_stop=true;
         k230_cmd=1;
+    while(1)
+    {
+        
         
         exp_ball_pos=test_ball_exp_pos;
         vTaskDelay(50);

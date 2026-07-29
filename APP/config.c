@@ -86,7 +86,4 @@ void SetupConfig() {
   NVIC_EnableIRQ(UART_3_INST_INT_IRQN);
   NVIC_EnableIRQ(ENCODER_PIN_GPIOB_INT_IRQN);
   NVIC_EnableIRQ(ENCODER_PIN_GPIOA_INT_IRQN);
-  NVIC_EnableIRQ(ADC12_0_INST_INT_IRQN);
-
-  GWModelInit();        //寻迹模块初始化
 }

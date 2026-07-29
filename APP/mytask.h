@@ -28,11 +28,6 @@ void VOFA_Task(void* param);
 void K230RecvTask(void* param);
 
 
-//工具函数
-bool is_line(uint16_t value);
-
-
-
 //赛题任务
 void Task1(void* parma);
 void Task2(void* parma);
