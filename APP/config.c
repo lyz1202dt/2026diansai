@@ -1,7 +1,9 @@
 #include "config.h"
+#include "Driver/uart/uart.h"
 
 SerialHandle_t *g_serial;
 SerialHandle_t *zdt_serial;
+SerialHandle_t *vofa_serial;
 
 L298N_t g_l298n = {
     .pwm_timer = WHEEL_PWM_INST,
@@ -78,8 +80,10 @@ void SetupConfig() {
   EncoderInit(&g_encoder2);
   g_serial = SerialInit(UART_0_INST, SERIAL_MODE_IT, NULL, NULL);
   zdt_serial=SerialInit(UART_1_INST,SERIAL_MODE_IT, NULL, NULL);
+  vofa_serial=SerialInit(UART_2_INST,SERIAL_MODE_IT, NULL, NULL);
   NVIC_EnableIRQ(UART_0_INST_INT_IRQN);
   NVIC_EnableIRQ(UART_1_INST_INT_IRQN);
+  NVIC_EnableIRQ(UART_2_INST_INT_IRQN);
   NVIC_EnableIRQ(ENCODER_PIN_GPIOB_INT_IRQN);
   NVIC_EnableIRQ(ENCODER_PIN_GPIOA_INT_IRQN);
   NVIC_EnableIRQ(ADC12_0_INST_INT_IRQN);

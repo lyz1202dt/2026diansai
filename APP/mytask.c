@@ -279,7 +279,7 @@ float joint_cur_pos;
 #define PIXEL2POSITION(x) ((x)*0.01f+0.15f)
 #define BALL_POS_TO_CENTER_DIS(x) ((x)+0.20f)
 
-float motor_base_angle_offset=0.1f;
+float motor_base_angle_offset=-30.0f;
 
 static float stick_angle_to_motor_angle(float angle)
 {
@@ -312,7 +312,7 @@ float motor_exp_pos=0.0f;
 float exp_ball_pos=0.0f;
 float stick_cur_angle=0.0f;
 
-float k_joint_idel_angle=45.0f;
+float k_joint_idel_angle=30.0f;
 
 float car_rotation_feedforward=0.0f;
 
@@ -327,7 +327,7 @@ bool car_is_stop=true;
 //钢球位置控制
 void ZDTDriver(void* param)
 {
-    Kalman1D_Init(&ball_filter, 0.0f, 0.0f, 1.0f, 1.0f, 0.1f);
+    Kalman1D_Init(&ball_filter, 0.0f, 0.0f, 10.0f, 0.0001f, 0.1f);
     //初始化张大头串口环境
     MakeZDTSerialEnv(zdt_serial);
     BaseType_t last_wake_time=xTaskGetTickCount();
@@ -344,13 +344,14 @@ void ZDTDriver(void* param)
         }
         
         //用滤波后小球位置跑PID
-        if(enable_ball_pos_control)
+        // if(enable_ball_pos_control)
+        // {
+        //     PID_Control(ball_filter.position, exp_ball_pos, &ball_pos_pid);
+        //     motor_exp_pos=stick_angle_to_motor_angle(car_rotation_feedforward+ball_pos_pid.pid_out);
+        // }
+        // else
         {
-            PID_Control(ball_filter.position, exp_ball_pos, &ball_pos_pid);
-            motor_exp_pos=stick_angle_to_motor_angle(car_rotation_feedforward+ball_pos_pid.pid_out);
-        }
-        else{
-            motor_exp_pos=k_joint_idel_angle;  //如果不执行平衡控制，那么保持电机位置在中性点位置
+            motor_exp_pos=k_joint_idel_angle+motor_base_angle_offset;  //如果不执行平衡控制，那么保持电机位置在中性点位置
         }
         PID_Control(joint_cur_pos, motor_exp_pos, &motor_pos_pid);
         SetMotorVel(0x03,motor_exp_omega+motor_pos_pid.pid_out);
@@ -369,7 +370,7 @@ void VOFA_Task(void* param)
   while(1)
   {
     sprintf(vofa_data_buffer,"%.3f,%.3f,%.3f,%.3f\n",vofa_value[0],vofa_value[1],vofa_value[2],vofa_value[3]);
-    SerialTransmit(g_serial,  vofa_data_buffer, strlen(vofa_data_buffer));
+    SerialTransmit(vofa_serial,  vofa_data_buffer, strlen(vofa_data_buffer));
     vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(10));
   }
 }
@@ -429,10 +430,16 @@ void k230_pack_parse(uint8_t *src)
     
     float dt=(xTaskGetTickCount()-last_ball_pos_update_time)*0.001f;
     if(dt>0.08f)    //最多容忍两次丢帧，防止时间过大导致滤波器崩溃
-        dt=0.07f;
+        dt=0.08f;
     last_ball_pos_update_time=xTaskGetTickCount();
 
     Kalman1D_Update(&ball_filter,raw_position , raw_acc, dt);
+
+
+    vofa_value[0]=raw_position;
+    vofa_value[1]=ball_filter.position;
+    vofa_value[2]=raw_acc;
+    vofa_value[3]=ball_filter.velocity;
 }
 
 void K230RecvTask(void* param)
@@ -479,6 +486,7 @@ float task1_distance_offset;
 TickType_t task1_start_time;
 void Task1(void* parma)
 {
+    k230_cmd=0;
     task_running=true;
     vTaskDelay(pdMS_TO_TICKS(500));
     kExpTrackVel=0.2f;
@@ -509,16 +517,17 @@ void Task1(void* parma)
     while(1){vTaskDelay(1000);}
 }
 
-Quintic line;
+
 void Task2(void* parma)
 {
+    k230_cmd=1;
     task_running=true;
     enable_line_track=false;
     force_exit=false;
     enable_ball_pos_control=true;
-    vTaskDelay(pdMS_TO_TICKS(50));
+    vTaskDelay(pdMS_TO_TICKS(100));
     exp_ball_pos=0.05f;
-    while(absf(ball_filter.positio-0.05f)>0.007)
+    while(fabsf(ball_filter.position-0.05f)>0.007)
     {
         vTaskDelay(20);
     }
@@ -529,6 +538,7 @@ void Task2(void* parma)
         vTaskDelay(200);
     }
     enable_ball_pos_control=false;
+    k230_cmd=0;
     //清理现场
     task_running=false;
     vTaskDelete(NULL);
@@ -544,6 +554,7 @@ void Task3(void* param)
 {
     TickType_t task3_start_time;
 
+    k230_cmd=1;
     task_running=true;
     exp_ball_pos=0.0f;
     enable_ball_pos_control=true;
@@ -563,8 +574,25 @@ void Task3(void* param)
     
     enable_line_track=false;
     enable_ball_pos_control=false;
-    
+
+    k230_cmd=0;
     task_running=false;
     vTaskDelete(NULL);
     while(1){vTaskDelay(1000);}
+}
+
+
+float test_ball_exp_pos=0.0f;
+void TestTask(void* param)
+{
+    vTaskDelay(2000);
+    while(1)
+    {
+        enable_ball_pos_control=true;
+        enable_line_track=false;
+        car_is_stop=true;
+        
+        exp_ball_pos=test_ball_exp_pos;
+        vTaskDelay(50);
+    }
 }

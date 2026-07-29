@@ -38,4 +38,6 @@ void Task1(void* parma);
 void Task2(void* parma);
 void Task3(void* parma);
 
+void TestTask(void* param);
+
 #endif

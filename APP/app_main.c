@@ -27,6 +27,8 @@ TaskHandle_t wheel_task_handle;
 TaskHandle_t imu_task_handle;
 TaskHandle_t line_track_task_handle;
 TaskHandle_t zdt_driver_task_handle;
+TaskHandle_t k230_recv_task_handle;
+TaskHandle_t test_task_handle;
 TaskHandle_t vofa_comm_task_handle;
 
 TaskHandle_t task_x_handle;
@@ -53,10 +55,11 @@ int app_main() {
   xTaskCreate(IMUTask, "imu_task", 256, NULL, 5, &imu_task_handle);
   xTaskCreate(LineTrack, "line_track", 128, NULL, 4, &line_track_task_handle);
   xTaskCreate(ZDTDriver,"zdt_driver",128,NULL, 4,&zdt_driver_task_handle);
-  xTaskCreate(K230RecvTask,"k230_recv",256,NULL, 4,&zdt_driver_task_handle);
-  //xTaskCreate(VOFA_Task,"vofa",512,NULL, 1,&vofa_comm_task_handle);
-  //xTaskCreate()
-  OLED_Init(); 
+  xTaskCreate(K230RecvTask,"k230_recv",256,NULL, 3,&k230_recv_task_handle);
+  xTaskCreate(TestTask, "test_task",128, NULL, 2, &test_task_handle)
+  xTaskCreate(VOFA_Task,"vofa",512,NULL, 1,&vofa_comm_task_handle);
+  //xTaskCreate()TestTask
+  OLED_Init();
   
   
   //SerialTransmit(zdt_serial, send_str, 6);
@@ -122,7 +125,6 @@ int app_main() {
 
 
 
-    k230_cmd=0;
     if(current_task_id==1&&task_running==false)      //当前是第一题
     {
         force_exit=false;
@@ -141,9 +143,7 @@ int app_main() {
         task_running=true;
         xTaskCreate(Task3, "task3", 128, NULL, 2, &task_x_handle);
     }
-
     SerialTransmit(g_serial, &k230_cmd, 1);         //更新K230状态
-    
     vTaskDelayUntil(&last_wake_time,50);
   }
   
