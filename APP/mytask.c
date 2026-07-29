@@ -240,7 +240,7 @@ float last_detected_omega = 0.0f;
 }
 
 
-#define SetMotorVel(id,omega) Emm_V5_Vel_Control(id, omega>=0.0f?0:1, (uint16_t)(ABS(omega*(60.0f/(2.0f*3.14159265f)))), 0, 0)
+#define SetMotorVel(id,omega) Emm_V5_Vel_Control(id, (omega)>=0.0f?0:1, (uint16_t)(ABS((omega)*(60.0f/(2.0f*3.14159265f)))), 0, 0)
 
 uint8_t zdt_recv_buf[32];
 uint8_t zdt_recv_cnt;
@@ -255,7 +255,7 @@ float joint_cur_pos;
 #define PIXEL2POSITION(x) ((x)*1.0f)
 #define BALL_POS_TO_CENTER_DIS(x) ((x)+0.20f)
 
-float motor_base_angle_offset=-30.0f;
+float motor_base_angle_offset=0.48f;    //注意：单位是度
 
 static float stick_angle_to_motor_angle(float angle)
 {
@@ -279,26 +279,30 @@ static float motor_angle_to_stick_angle(float angle)
     return RAD2ANGLE(stick_rad);
 }
 
-Kalman1D ball_filter;
 
+//参数常量
+const float k_joint_idel_angle=30.0f;
+
+//对外暴露的接口
+bool enable_ball_pos_control=false;
+bool car_is_stop=true;
+float exp_ball_pos=0.0f;
+float acc_feedforward=0.0f;
+
+float stick_current_angle=0.0f;
+
+float stick_angle_feedforward=0.0f;
+
+//电机位置环
+PID motor_pos_pid={.Kp=0.17f,.Kd=0.3f,.Ki=0.0f,.limit=100.0f,.output_limit=10.0f};
+PID ball_pos_pid={.Kp=0.0f,.Kd=0.0f,.Ki=0.0f,.limit=100.0f,.output_limit=15.0f};
+
+Kalman1D ball_filter;
 float stick_exp_angle=0.0f;
 float motor_exp_omega=0.0f;
 float motor_exp_pos=0.0f;
 
-float exp_ball_pos=0.0f;
-float stick_cur_angle=0.0f;
 
-float k_joint_idel_angle=30.0f;
-
-float car_rotation_feedforward=0.0f;
-
-//电机位置环
-PID motor_pos_pid={.Kp=0.0f,.Kd=0.0f,.Ki=0.0f,.limit=100.0f,.output_limit=20.0f};
-
-PID ball_pos_pid={.Kp=0.0f,.Kd=0.0f,.Ki=0.0f,.limit=100.0f,.output_limit=15.0f};
-
-bool enable_ball_pos_control=false;
-bool car_is_stop=true;
 
 //钢球位置控制
 void ZDTDriver(void* param)
@@ -309,14 +313,16 @@ void ZDTDriver(void* param)
     BaseType_t last_wake_time=xTaskGetTickCount();
     while(1)
     {
+        float angle_temp=0.0f;
         Emm_V5_Read_Sys_Params(0x03, S_CPOS);
         uart_Receive_Data(zdt_recv_buf, 8,&zdt_recv_cnt);
-        Emm_V5_GetPos(0x03,zdt_recv_buf,&joint_cur_pos);
+        Emm_V5_GetPos(0x03,zdt_recv_buf,&angle_temp);
+        joint_cur_pos=-angle_temp;
 
         if(!car_is_stop)
         {
-            float forward_acc=-BALL_POS_TO_CENTER_DIS(ball_filter.position)*mpu6050_yaw_rate_dps*mpu6050_yaw_rate_dps;
-            car_rotation_feedforward=RAD2ANGLE(asinf(forward_acc/9.8f));    //补偿自旋所需的角度
+            float forward_acc=-BALL_POS_TO_CENTER_DIS(ball_filter.position)*mpu6050_yaw_rate_dps*mpu6050_yaw_rate_dps+acc_feedforward;
+            stick_angle_feedforward=RAD2ANGLE(asinf(forward_acc/9.8f));    //补偿自旋和加速前进所需的角度
         }
         
         //用滤波后小球位置跑PID
@@ -329,8 +335,14 @@ void ZDTDriver(void* param)
         {
             motor_exp_pos=k_joint_idel_angle+motor_base_angle_offset;  //如果不执行平衡控制，那么保持电机位置在中性点位置
         }
+        
+        if(motor_exp_pos>50.0f)   //防止数据异常损坏电机
+          motor_exp_pos=50.0f;
+        else if(motor_exp_pos<0.0f)
+          motor_exp_pos=0.0f;
+        
         PID_Control(joint_cur_pos, motor_exp_pos, &motor_pos_pid);
-        SetMotorVel(0x03,motor_exp_omega+motor_pos_pid.pid_out);
+        SetMotorVel(0x03,-(motor_exp_omega+motor_pos_pid.pid_out));
         uart_Receive_Data(zdt_recv_buf,4, &zdt_recv_cnt);
         vTaskDelayUntil(&last_wake_time,pdMS_TO_TICKS(4));
     }
@@ -401,8 +413,8 @@ void k230_pack_parse(uint8_t *src)
     memcpy(&recv_pack, src, sizeof(k230_comm_recv_pack));
     raw_position=PIXEL2POSITION(recv_pack.position);
 
-    stick_cur_angle=motor_angle_to_stick_angle(joint_cur_pos);  //求解棍子角度，计算加速度作为滤波器输入
-    raw_acc=sinf(ANGLE2RAD(stick_cur_angle))*9.8f;
+    stick_current_angle=motor_angle_to_stick_angle(joint_cur_pos);  //求解棍子角度，计算加速度作为滤波器输入
+    raw_acc=sinf(ANGLE2RAD(stick_current_angle))*9.8f;
     
     float dt=(xTaskGetTickCount()-last_ball_pos_update_time)*0.001f;
     if(dt>0.08f)    //最多容忍两次丢帧，防止时间过大导致滤波器崩溃
@@ -553,6 +565,7 @@ void Task3(void* param)
     {
         float time=(xTaskGetTickCount()-task3_start_time)*0.001f;
         trajectory_running=QuinticSample(time, &task3_exp_pos, &task3_exp_vel, &task3_exp_acc, &task3_quintic);
+        acc_feedforward=task3_exp_acc;
         line_trace_exp_vel=task3_exp_vel+task3_pos_kp*(task3_exp_pos-sum_distance);   //求循迹速度
         vTaskDelay(20);
     }
@@ -571,8 +584,8 @@ float test_ball_exp_pos=0.0f;
 void TestTask(void* param)
 {
     vTaskDelay(2000);
-    enable_ball_pos_control=true;
-    enable_line_track=true;
+    enable_ball_pos_control=false;
+    enable_line_track=false;
     car_is_stop=true;
     k230_cmd=1;
     while(1)
