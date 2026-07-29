@@ -463,7 +463,7 @@ void MPU6050_Init(void)
 
 }
 
-int read_quad(float *q)
+int read_imu(float *q, float *gyro_dps)
 {
     /* This function gets new data from the FIFO when the DMP is in
     * use. The FIFO can contain any combination of Data_Gyro, Data_Accel,
@@ -479,16 +479,32 @@ int read_quad(float *q)
     */
 
     int result;
+    float gyro_sens;
     do
     {
         result = dmp_read_fifo(Data_Gyro, Data_Accel, quat, &sensor_timestamp, &sensors, &more);
     } while (more);
     if (result) return -1;
+
     q[0] = quat[0] / q30;
     q[1] = quat[1] / q30;
     q[2] = quat[2] / q30;
     q[3] = quat[3] / q30;
+
+    if (gyro_dps != NULL)
+    {
+        if (mpu_get_gyro_sens(&gyro_sens) || (gyro_sens <= 0.0f)) return -1;
+        gyro_dps[0] = (float)Data_Gyro[0] / gyro_sens;
+        gyro_dps[1] = (float)Data_Gyro[1] / gyro_sens;
+        gyro_dps[2] = (float)Data_Gyro[2] / gyro_sens;
+    }
+
     return 0;
+}
+
+int read_quad(float *q)
+{
+    return read_imu(q, NULL);
 }
 
 void get_euler_angles(const float *q,float *roll,float *pitch,float *yaw)

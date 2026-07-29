@@ -34,6 +34,7 @@ extern bool task_running;
 
 // IMU
 float mpu6050_yaw;
+float mpu6050_yaw_rate_dps;
 bool mpu6050_success = false;
 
 // Chassis
@@ -67,10 +68,12 @@ void IMUTask(void *param) {
   MPU6050_Init();
   TickType_t pxPreviousWakeTime = xTaskGetTickCount();
   float mpu6050_quat[4];
+  float mpu6050_gyro_dps[3];
   while (1) {
-    mpu6050_success = (read_quad(mpu6050_quat) == 0);
+    mpu6050_success = (read_imu(mpu6050_quat, mpu6050_gyro_dps) == 0);
     if (mpu6050_success) {
       get_euler_angles(mpu6050_quat, NULL, NULL, &mpu6050_yaw);
+      mpu6050_yaw_rate_dps = mpu6050_gyro_dps[2];
     }
     vTaskDelayUntil(&pxPreviousWakeTime, pdMS_TO_TICKS(5));
   }
@@ -270,7 +273,8 @@ float joint_cur_pos;
 #define SUPPORT_STICK_RADIUS 0.05f 
 #define BASE_HEIGHT     0.04f
 #define STICK_LENGTH    0.25f
-#define PIXEL2POSITION(x) (x*0.01f+0.15f)
+#define PIXEL2POSITION(x) ((x)*0.01f+0.15f)
+#define BALL_POS_TO_CENTER_DIS ((x)+0.20f)
 
 float motor_base_angle_offset=0.1f;
 
@@ -307,12 +311,16 @@ float stick_cur_angle=0.0f;
 
 float k_joint_idel_angle=45.0f;
 
+float car_rotation_feedforward=0.0f;
+
 //电机位置环
 PID motor_pos_pid={.Kp=0.0f,.Kd=0.0f,.Ki=0.0f,.limit=100.0f,.output_limit=20.0f};
 
 PID ball_pos_pid={.Kp=0.0f,.Kd=0.0f,.Ki=0.0f,.limit=100.0f,.output_limit=15.0f};
 
 bool enable_ball_pos_control=false;
+bool car_is_stop=true;
+
 //钢球位置控制
 void ZDTDriver(void* param)
 {
@@ -326,12 +334,17 @@ void ZDTDriver(void* param)
         uart_Receive_Data(zdt_recv_buf, 8,&zdt_recv_cnt);
         Emm_V5_GetPos(0x03,zdt_recv_buf,&joint_cur_pos);
 
+        if(!car_is_stop)
+        {
+            float forward_acc=-BALL_POS_TO_CENTER_DIS(filter.position)*mpu6050_yaw_rate_dps*mpu6050_yaw_rate_dps;
+            car_rotation_feedforward=RAD2ANGLE(asinf(forward_acc/9.8f));    //补偿自旋所需的角度
+        }
         
         //用滤波后小球位置跑PID
         if(enable_ball_pos_control)
         {
             PID_Control(filter.position, exp_ball_pos, &ball_pos_pid);
-            motor_exp_pos=stick_angle_to_motor_angle(ball_pos_pid.pid_out);
+            motor_exp_pos=stick_angle_to_motor_angle(car_rotation_feedforward+ball_pos_pid.pid_out);
         }
         else{
             motor_exp_pos=k_joint_idel_anglef;  //如果不执行平衡控制，那么保持电机位置在中性点位置
