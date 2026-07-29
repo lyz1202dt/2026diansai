@@ -32,8 +32,10 @@ void K230RecvTask(void* param);
 bool is_line(uint16_t value);
 
 
+
 //赛题任务
 void Task1(void* parma);
 void Task2(void* parma);
+void Task3(void* parma);
 
 #endif

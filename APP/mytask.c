@@ -23,6 +23,8 @@
 #include "Driver/zdt/Emm_V5.h"
 #include "Driver/zdt/uartport.h"
 #include "Lib/pid/PID.h"
+#include "Lib/quintic/quintic.h"
+#include "Lib/kalman/kalman.h"
 #include <ti/driverlib/dl_dma.h>
 
 #include "config.h"
@@ -31,6 +33,7 @@
 extern float vofa_value[4];
 extern uint8_t k230_cmd;
 extern bool task_running;
+extern bool force_exit;
 
 // IMU
 float mpu6050_yaw;
@@ -300,7 +303,7 @@ static float motor_angle_to_stick_angle(float angle)
     return RAD2ANGLE(stick_rad);
 }
 
-Kalman1D filter;
+Kalman1D ball_filter;
 
 float stick_exp_angle=0.0f;
 float motor_exp_omega=0.0f;
@@ -324,7 +327,7 @@ bool car_is_stop=true;
 //钢球位置控制
 void ZDTDriver(void* param)
 {
-    Kalman1D_Init(&filter, 0.0f, 0.0f, 1.0f, 1.0f, 0.1f);
+    Kalman1D_Init(&ball_filter, 0.0f, 0.0f, 1.0f, 1.0f, 0.1f);
     //初始化张大头串口环境
     MakeZDTSerialEnv(zdt_serial);
     BaseType_t last_wake_time=xTaskGetTickCount();
@@ -336,14 +339,14 @@ void ZDTDriver(void* param)
 
         if(!car_is_stop)
         {
-            float forward_acc=-BALL_POS_TO_CENTER_DIS(filter.position)*mpu6050_yaw_rate_dps*mpu6050_yaw_rate_dps;
+            float forward_acc=-BALL_POS_TO_CENTER_DIS(ball_filter.position)*mpu6050_yaw_rate_dps*mpu6050_yaw_rate_dps;
             car_rotation_feedforward=RAD2ANGLE(asinf(forward_acc/9.8f));    //补偿自旋所需的角度
         }
         
         //用滤波后小球位置跑PID
         if(enable_ball_pos_control)
         {
-            PID_Control(filter.position, exp_ball_pos, &ball_pos_pid);
+            PID_Control(ball_filter.position, exp_ball_pos, &ball_pos_pid);
             motor_exp_pos=stick_angle_to_motor_angle(car_rotation_feedforward+ball_pos_pid.pid_out);
         }
         else{
@@ -429,7 +432,7 @@ void k230_pack_parse(uint8_t *src)
         dt=0.07f;
     last_ball_pos_update_time=xTaskGetTickCount();
 
-    Kalman1D_Update(&filter,raw_position , raw_acc, dt);
+    Kalman1D_Update(&ball_filter,raw_position , raw_acc, dt);
 }
 
 void K230RecvTask(void* param)
@@ -506,13 +509,61 @@ void Task1(void* parma)
     while(1){vTaskDelay(1000);}
 }
 
-
+Quintic line;
 void Task2(void* parma)
 {
     task_running=true;
-    vTaskDelay(pdMS_TO_TICKS(500));
+    enable_line_track=false;
+    force_exit=false;
+    enable_ball_pos_control=true;
+    vTaskDelay(pdMS_TO_TICKS(50));
+    exp_ball_pos=0.05f;
+    while(absf(ball_filter.positio-0.05f)>0.007)
+    {
+        vTaskDelay(20);
+    }
+    exp_ball_pos=-0.05f;
 
-    //尚未编写
+    while(!force_exit)  //等待强制退出信号
+    {
+        vTaskDelay(200);
+    }
+    enable_ball_pos_control=false;
+    //清理现场
+    task_running=false;
+    vTaskDelete(NULL);
+    while(1){vTaskDelay(1000);}
+}
+
+Quintic task3_quintic;
+float task3_exp_pos;
+float task3_exp_vel;
+float task3_exp_acc;
+float task3_pos_kp=10.0f;
+void Task3(void* param)
+{
+    TickType_t task3_start_time;
+
+    task_running=true;
+    exp_ball_pos=0.0f;
+    enable_ball_pos_control=true;
+    QuinticGenerate(&task3_quintic, sum_distance, sum_distance+1.7f, 0.1f, 7.5f);
+    task3_start_time=xTaskGetTickCount();
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    enable_line_track=true;
+
+    bool trajectory_running=true;
+    while(trajectory_running)
+    {
+        float time=(xTaskGetTickCount()-task3_start_time)*0.001f;
+        trajectory_running=QuinticSample(time, &task3_exp_pos, &task3_exp_vel, &task3_exp_acc, &task3_quintic);
+        kExpTrackVel=task3_exp_vel+task3_pos_kp*(task3_exp_pos-sum_distance);   //求循迹速度
+        vTaskDelay(20);
+    }
+    
+    enable_line_track=false;
+    enable_ball_pos_control=false;
+    
     task_running=false;
     vTaskDelete(NULL);
     while(1){vTaskDelay(1000);}

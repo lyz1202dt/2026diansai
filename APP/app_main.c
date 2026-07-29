@@ -43,6 +43,7 @@ int last_task_id=0;
 int current_select_task_id=0;
 
 bool task_running=false;
+bool force_exit=false;
 
 //拉起所有任务，UI功能
 int app_main() {
@@ -52,6 +53,7 @@ int app_main() {
   xTaskCreate(IMUTask, "imu_task", 256, NULL, 5, &imu_task_handle);
   xTaskCreate(LineTrack, "line_track", 128, NULL, 4, &line_track_task_handle);
   xTaskCreate(ZDTDriver,"zdt_driver",128,NULL, 4,&zdt_driver_task_handle);
+  xTaskCreate(K230RecvTask,"k230_recv",256,NULL, 4,&zdt_driver_task_handle);
   //xTaskCreate(VOFA_Task,"vofa",512,NULL, 1,&vofa_comm_task_handle);
   //xTaskCreate()
   OLED_Init(); 
@@ -67,6 +69,7 @@ int app_main() {
       OLED_Printf(80, 0, 8, "clear");
       //enable_line_track=1;
       current_task_id=0;
+      force_exit=true;
     }
     else if(!DL_GPIO_readPins(KEY3_PORT, KEY3_K2_PIN))  //确认
     {
@@ -122,8 +125,21 @@ int app_main() {
     k230_cmd=0;
     if(current_task_id==1&&task_running==false)      //当前是第一题
     {
-        xTaskCreate(Task1, "task1", 128, NULL, 2, &task_x_handle);
+        force_exit=false;
         task_running=true;
+        xTaskCreate(Task1, "task1", 128, NULL, 2, &task_x_handle);
+    }
+    else if(current_task_id==2&&task_running==false)      //当前是第二题
+    {
+        force_exit=false;
+        task_running=true;
+        xTaskCreate(Task2, "task2", 128, NULL, 2, &task_x_handle);
+    }
+    else if(current_task_id==3&&task_running==false)      //当前是第三题
+    {
+        force_exit=false;
+        task_running=true;
+        xTaskCreate(Task3, "task3", 128, NULL, 2, &task_x_handle);
     }
 
     SerialTransmit(g_serial, &k230_cmd, 1);         //更新K230状态
