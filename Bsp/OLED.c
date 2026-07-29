@@ -24,6 +24,7 @@
 #define OLED_I2C_TIMEOUT_TICKS pdMS_TO_TICKS(I2C_TIMEOUT_MS)
 
 static SemaphoreHandle_t k_oled_i2c_semphr;
+static SemaphoreHandle_t k_oled_printf_mutex;
 static volatile int g_oled_i2c_status;
 
 static void oled_i2c_init_semphr(void)
@@ -36,6 +37,14 @@ static void oled_i2c_init_semphr(void)
     if (k_oled_i2c_semphr != NULL)
     {
         xSemaphoreTake(k_oled_i2c_semphr, 0);
+    }
+}
+
+static void oled_printf_init_mutex(void)
+{
+    if (k_oled_printf_mutex == NULL)
+    {
+        k_oled_printf_mutex = xSemaphoreCreateMutex();
     }
 }
 
@@ -459,7 +468,20 @@ uint16_t OLED_Printf(uint8_t x, uint8_t y, uint8_t sizey, const char *format, ..
     uint16_t len = 0;
     len = vsprintf(Buffer, format, args);
     va_end(args);
+
+    oled_printf_init_mutex();
+    if (k_oled_printf_mutex != NULL)
+    {
+        xSemaphoreTake(k_oled_printf_mutex, portMAX_DELAY);
+    }
+
     OLED_ShowString(x, y, sizey, (uint8_t *)Buffer);
+
+    if (k_oled_printf_mutex != NULL)
+    {
+        xSemaphoreGive(k_oled_printf_mutex);
+    }
+
     return len;
 }
 
@@ -475,6 +497,7 @@ uint16_t OLED_Printf(uint8_t x, uint8_t y, uint8_t sizey, const char *format, ..
 void OLED_Init(void)
 {
     oled_i2c_init_semphr();
+    oled_printf_init_mutex();
     NVIC_EnableIRQ(OLED_I2C_INST_INT_IRQN);
 
     if (DL_I2C_getSDAStatus(OLED_I2C_INST) == DL_I2C_CONTROLLER_SDA_LOW) I2C_OLED_i2c_sda_unlock();

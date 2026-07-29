@@ -37,6 +37,7 @@ extern bool enable_line_track;
 extern float cur_robot_pos_x, cur_robot_pos_y;
 extern float cur_robot_yaw, odom_yaw_offset;
 extern float mpu6050_yaw;
+extern float sum_distance;
 
 uint8_t k230_cmd=0;
 
@@ -57,8 +58,8 @@ int app_main() {
   xTaskCreate(LineTrack, "line_track", 128, NULL, 4, &line_track_task_handle);
   xTaskCreate(ZDTDriver,"zdt_driver",128,NULL, 4,&zdt_driver_task_handle);
   xTaskCreate(K230RecvTask,"k230_recv",256,NULL, 4,&k230_recv_task_handle);
-  xTaskCreate(TestTask, "test_task",128, NULL, 2, &test_task_handle);
-  xTaskCreate(VOFA_Task,"vofa",512,NULL, 1,&vofa_comm_task_handle);
+  //xTaskCreate(TestTask, "test_task",128, NULL, 2, &test_task_handle);
+  //xTaskCreate(VOFA_Task,"vofa",512,NULL, 1,&vofa_comm_task_handle);
   
   
   //SerialTransmit(zdt_serial, send_str, 6);
@@ -118,6 +119,7 @@ int app_main() {
     //OLED
     //OLED_Printf(0, 10, 8, "pos=(%.3f,%.3f)   ", cur_robot_pos_x,cur_robot_pos_y);
     //OLED_Printf(0, 20, 8, "yaw=%.2f   ", cur_robot_yaw);
+    OLED_Printf(0, 20, 8, "s=%.3f   ",sum_distance);
     OLED_Printf(0, 0, 16, "oled");
 
 
@@ -127,19 +129,19 @@ int app_main() {
     {
         force_exit=false;
         task_running=true;
-        xTaskCreate(Task1, "task1", 128, NULL, 2, &task_x_handle);
+        xTaskCreate(Task1, "task1", 512, NULL, 2, &task_x_handle);
     }
     else if(current_task_id==2&&task_running==false)      //当前是第二题
     {
         force_exit=false;
         task_running=true;
-        xTaskCreate(Task2, "task2", 128, NULL, 2, &task_x_handle);
+        xTaskCreate(Task2, "task2", 512, NULL, 2, &task_x_handle);
     }
     else if(current_task_id==3&&task_running==false)      //当前是第三题
     {
         force_exit=false;
         task_running=true;
-        xTaskCreate(Task3, "task3", 128, NULL, 2, &task_x_handle);
+        xTaskCreate(Task3, "task3", 512, NULL, 2, &task_x_handle);
     }
     SerialTransmit(g_serial, &k230_cmd, 1);         //更新K230状态
     vTaskDelayUntil(&last_wake_time,50);

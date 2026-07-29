@@ -34,6 +34,7 @@ extern float vofa_value[4];
 extern uint8_t k230_cmd;
 extern bool task_running;
 extern bool force_exit;
+extern int current_task_id;
 
 // IMU
 float mpu6050_yaw;
@@ -175,32 +176,52 @@ static bool is_line(uint8_t index,uint8_t value)
   return ((~value)>>index)&0x01;
 }
 
-float line_track_omega = 0.0f;
-float line_track_vel = 0.0f;
+static uint8_t count_line_sensors(uint8_t value)
+{
+  uint8_t count = 0;
 
-float kExpTrackVel=0.10f;
+  for (uint8_t i = 0; i < 8; i++) {
+    if (is_line(i, value)) {
+      count++;
+    }
+  }
 
+  return count;
+}
+
+
+
+float line_trace_exp_vel=0.10f;
 
 bool line_detected=false;
 bool enable_line_track = false;
 uint8_t line_trace_result;
 void LineTrack(void *param) {
-  TickType_t pxPreviousWakeTime = xTaskGetTickCount();
-  const float omega_weight[8] = {-1.2f, -0.7f, -0.3f, -0.1f,
-                                 0.1f, 0.3f,  0.7f,  1.2f};
-
+TickType_t pxPreviousWakeTime = xTaskGetTickCount();
+const float omega_weight[8] = {-1.5f, -0.9f, -0.3f, -0.1f,
+                                 0.1f, 0.3f,  0.9f,  1.5f};
+float line_track_omega = 0.0f;
+float line_track_vel = 0.0f;
+float last_detected_omega = 0.0f;
   while (1) {
     line_trace_result=GWGetState();
 
     float detected_omega=0.0f;
+    bool detected_any_line = false;
       for (int i = 0; i < 8; i++) {
         if (is_line(i,line_trace_result)) {
           detected_omega += omega_weight[i];
+          detected_any_line = true;
         }
+      }
+      if (detected_any_line) {
+        last_detected_omega = detected_omega;
+      } else {
+        detected_omega = last_detected_omega;
       }
 
       line_track_omega = 0.3*detected_omega+0.7*line_track_omega;
-      line_track_vel = kExpTrackVel;
+      line_track_vel = line_trace_exp_vel;
 
     // 操控底盘运动
 
@@ -437,7 +458,7 @@ void K230RecvTask(void* param)
 
 
 
-float task1_finished_gate_distance=3.0f;
+float task1_finished_gate_distance=5.5f;
 float task1_distance_offset;
 TickType_t task1_start_time;
 void Task1(void* parma)
@@ -445,7 +466,7 @@ void Task1(void* parma)
     k230_cmd=0;
     task_running=true;
     vTaskDelay(pdMS_TO_TICKS(500));
-    kExpTrackVel=0.2f;
+    line_trace_exp_vel=0.4f;
     task1_start_time=xTaskGetTickCount();
     TickType_t pxPreviousWakeTime = task1_start_time;
     enable_line_track=true;
@@ -458,17 +479,25 @@ void Task1(void* parma)
 
 
 
-    kExpTrackVel=0.1f;      //缓慢行驶直到遇到停止线
-    while(line_trace_result&0x3C!=0x3C)      //行驶到终点前附近0011 1100
+    line_trace_exp_vel=0.15f;      //缓慢行驶直到遇到停止线
+    int cnt=0;
+    while(count_line_sensors(line_trace_result) < 3)      //while退出的条件为任意3个传感器检测到黑线（黑线为0，白线为1）
     {
+      cnt++;
+        if(cnt%10==0)
+        {
+          OLED_Printf(40, 0, 16, "sensor=0x%x", ~line_trace_result);
+
+        }
         vTaskDelayUntil(&pxPreviousWakeTime, pdMS_TO_TICKS(30));
     }
 
     enable_line_track=false;
-    OLED_Printf(20, 0, 16, "time=%dms", xTaskGetTickCount()-task1_start_time);
+    OLED_Printf(30, 0, 16, "time=%dms", xTaskGetTickCount()-task1_start_time);
 
     //清理现场
     task_running=false;
+    current_task_id=0;
     vTaskDelete(NULL);
     while(1){vTaskDelay(1000);}
 }
@@ -524,7 +553,7 @@ void Task3(void* param)
     {
         float time=(xTaskGetTickCount()-task3_start_time)*0.001f;
         trajectory_running=QuinticSample(time, &task3_exp_pos, &task3_exp_vel, &task3_exp_acc, &task3_quintic);
-        kExpTrackVel=task3_exp_vel+task3_pos_kp*(task3_exp_pos-sum_distance);   //求循迹速度
+        line_trace_exp_vel=task3_exp_vel+task3_pos_kp*(task3_exp_pos-sum_distance);   //求循迹速度
         vTaskDelay(20);
     }
     
@@ -543,9 +572,9 @@ void TestTask(void* param)
 {
     vTaskDelay(2000);
     enable_ball_pos_control=true;
-        enable_line_track=false;
-        car_is_stop=true;
-        k230_cmd=1;
+    enable_line_track=true;
+    car_is_stop=true;
+    k230_cmd=1;
     while(1)
     {
         
