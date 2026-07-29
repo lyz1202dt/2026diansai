@@ -160,10 +160,10 @@ void WheelTask(void *param) {
       cur_robot_pos_y += vy * WHEEL_TASK_PERIOD_S;
     }
 
-    vofa_value[0]=m1_cur_omega;
-    vofa_value[1]=m1_exp_omega;
-    vofa_value[2]=m2_cur_omega;
-    vofa_value[3]=m2_exp_omega;
+    // vofa_value[0]=m1_cur_omega;
+    // vofa_value[1]=m1_exp_omega;
+    // vofa_value[2]=m2_cur_omega;
+    // vofa_value[3]=m2_exp_omega;
 
     vTaskDelayUntil(&pxPreviousWakeTime, pdMS_TO_TICKS(5));
   }
@@ -276,7 +276,7 @@ float joint_cur_pos;
 #define SUPPORT_STICK_RADIUS 0.05f 
 #define BASE_HEIGHT     0.04f
 #define STICK_LENGTH    0.25f
-#define PIXEL2POSITION(x) ((x)*0.01f+0.15f)
+#define PIXEL2POSITION(x) ((x)*1.0f)
 #define BALL_POS_TO_CENTER_DIS(x) ((x)+0.20f)
 
 float motor_base_angle_offset=-30.0f;
@@ -591,6 +591,7 @@ void TestTask(void* param)
         enable_ball_pos_control=true;
         enable_line_track=false;
         car_is_stop=true;
+        k230_cmd=1;
         
         exp_ball_pos=test_ball_exp_pos;
         vTaskDelay(50);
