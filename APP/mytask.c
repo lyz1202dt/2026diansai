@@ -274,7 +274,7 @@ float joint_cur_pos;
 #define BASE_HEIGHT     0.04f
 #define STICK_LENGTH    0.25f
 #define PIXEL2POSITION(x) ((x)*0.01f+0.15f)
-#define BALL_POS_TO_CENTER_DIS ((x)+0.20f)
+#define BALL_POS_TO_CENTER_DIS(x) ((x)+0.20f)
 
 float motor_base_angle_offset=0.1f;
 
@@ -347,7 +347,7 @@ void ZDTDriver(void* param)
             motor_exp_pos=stick_angle_to_motor_angle(car_rotation_feedforward+ball_pos_pid.pid_out);
         }
         else{
-            motor_exp_pos=k_joint_idel_anglef;  //如果不执行平衡控制，那么保持电机位置在中性点位置
+            motor_exp_pos=k_joint_idel_angle;  //如果不执行平衡控制，那么保持电机位置在中性点位置
         }
         PID_Control(joint_cur_pos, motor_exp_pos, &motor_pos_pid);
         SetMotorVel(0x03,motor_exp_omega+motor_pos_pid.pid_out);
@@ -424,7 +424,7 @@ void k230_pack_parse(uint8_t *src)
     stick_cur_angle=motor_angle_to_stick_angle(joint_cur_pos);  //求解棍子角度，计算加速度作为滤波器输入
     raw_acc=sinf(ANGLE2RAD(stick_cur_angle))*9.8f;
     
-    float dt=(xTaskGetTickCount()-last_ball_pos_update_time);
+    float dt=(xTaskGetTickCount()-last_ball_pos_update_time)*0.001f;
     if(dt>0.08f)    //最多容忍两次丢帧，防止时间过大导致滤波器崩溃
         dt=0.07f;
     last_ball_pos_update_time=xTaskGetTickCount();
@@ -484,7 +484,7 @@ void Task1(void* parma)
     enable_line_track=true;
     task1_distance_offset=sum_distance;
 
-    while(sum_distance-task1_distance_offset>task1_finished_gate_distance)      //高速行驶到停止线前
+    while(sum_distance-task1_distance_offset<task1_finished_gate_distance)      //高速行驶到停止线前
     {
         vTaskDelayUntil(&pxPreviousWakeTime, pdMS_TO_TICKS(100));
     }
