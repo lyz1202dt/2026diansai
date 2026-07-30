@@ -246,7 +246,11 @@ float last_detected_omega = 0.0f;
 }
 
 
-#define SetMotorVel(id,omega) Emm_V5_Vel_Control(id, (omega)>=0.0f?0:1, (uint16_t)(ABS((omega)*(60.0f/(2.0f*3.14159265f)))), 0, 0)
+static void SetMotorVel(uint8_t id, float omega)
+{
+    Emm_V5_Vel_Control(id, (omega)>=0.0f?0:1, (uint16_t)(ABS((omega)*(60.0f/(2.0f*3.14159265f)))), 0, 0);
+}
+
 
 uint8_t zdt_recv_buf[32];
 uint8_t zdt_recv_cnt;
@@ -261,6 +265,7 @@ float kBallDistanceOffset=-0.005f;
 #define STICK_LENGTH    0.25f
 #define PIXEL2POSITION(x) ((x)*0.01f+kBallDistanceOffset)   //换算成国际单位
 #define BALL_POS_TO_CENTER_DIS(x) ((-x)+0.11f)
+#define MOTOR_EXP_POS_MAX_STEP_DEG 5.0f
 
 float motor_base_angle_offset=0.48f;    //注意：单位是度
 
@@ -302,15 +307,28 @@ float stick_angle_feedforward=0.0f;
 
 //电机位置环
 PID motor_pos_pid={.Kp=0.17f,.Kd=0.3f,.Ki=0.0f,.limit=100.0f,.output_limit=10.0f};
-PID ball_pos_pid={.Kp=65.0f,.Kd=1300.0f,.Ki=1.0f,.limit=5.0f,.output_limit=6.0f};
+
 
 Kalman1D ball_filter;
 float stick_exp_angle=0.0f;
 float motor_exp_omega=0.0f;
 float motor_exp_pos=0.0f;
 
+static float limit_motor_exp_pos_step(float target_pos)
+{
+    float delta = target_pos - motor_exp_pos;
+
+    if (delta > MOTOR_EXP_POS_MAX_STEP_DEG) {
+        return motor_exp_pos + MOTOR_EXP_POS_MAX_STEP_DEG;
+    } else if (delta < -MOTOR_EXP_POS_MAX_STEP_DEG) {
+        return motor_exp_pos - MOTOR_EXP_POS_MAX_STEP_DEG;
+    }
+
+    return target_pos;
+}
 
 
+float test_pos=0.0f;
 //钢球位置控制
 void ZDTDriver(void* param)
 {
@@ -358,8 +376,9 @@ void ZDTDriver(void* param)
         else if(motor_exp_pos<0.0f)
           motor_exp_pos=0.0f;
         
-        PID_Control(joint_cur_pos, motor_exp_pos, &motor_pos_pid);
-        SetMotorVel(0x03,-(motor_exp_omega+motor_pos_pid.pid_out));
+        //PID_Control(joint_cur_pos, motor_exp_pos, &motor_pos_pid);
+        //SetMotorVel(0x03,-(motor_exp_omega+motor_pos_pid.pid_out));
+        Emm_V5_Pos_ControlEx(0x03,-motor_exp_pos,-joint_cur_pos,0.004f);
         uart_Receive_Data(zdt_recv_buf,4, &zdt_recv_cnt);
         vTaskDelayUntil(&last_wake_time,pdMS_TO_TICKS(4));
     }
@@ -424,6 +443,10 @@ static uint16_t K230CommResync(uint8_t *buffer)
 }
 
 TickType_t last_ball_pos_update_time=0;
+
+PID ball_pos_pid={.Kp=6.0f,.Kd=1.0f,.Ki=0.0f,.limit=5.0f,.output_limit=0.05f};
+PID ball_vel_pid={.Kp=45.0f,.Kd=0.0f,.Ki=2.0f,.limit=5.0f,.output_limit=6.0f};
+
 void k230_pack_parse(uint8_t *src)
 {
     RecvPack recv_pack;
@@ -445,7 +468,9 @@ void k230_pack_parse(uint8_t *src)
     if(enable_ball_pos_control)
     {
         PID_Control(ball_filter.position, exp_ball_pos, &ball_pos_pid);
-        motor_exp_pos=stick_angle_to_motor_angle(stick_angle_feedforward+ball_pos_pid.pid_out);
+        PID_Control(ball_filter.velocity,ball_pos_pid.pid_out, &ball_vel_pid);
+        float target_motor_exp_pos=stick_angle_to_motor_angle(stick_angle_feedforward+ball_vel_pid.pid_out);
+        motor_exp_pos=limit_motor_exp_pos_step(target_motor_exp_pos);
     }
 
 

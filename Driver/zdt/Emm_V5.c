@@ -377,5 +377,5 @@ void Emm_V5_Pos_ControlEx(uint8_t addr,float angle,float cur_angle,float dt)    
   if(angle>=0.0f)
     Emm_V5_Pos_Control(addr,0,vel,0,(uint32_t)(angle*(3200/360.0f)),1,0);
   else
-    Emm_V5_Pos_Control(addr,0,vel,0,(uint32_t)(-angle*(3200/360.0f)),1,0);
+    Emm_V5_Pos_Control(addr,1,vel,0,(uint32_t)(-angle*(3200/360.0f)),1,0);
 }
