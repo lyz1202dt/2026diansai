@@ -1,8 +1,8 @@
 #include "quintic.h"
 
-void QuinticGenerate(Quintic *quintic, float start_pos, float stop_pos, float stop_vel, float time) {
+void QuinticGenerate(Quintic *quintic, float start_pos, float start_vel, float stop_pos, float stop_vel, float time) {
     float delta;
-    float end_vel_time;
+    float vel_delta_time;
     float time2;
     float time3;
     float time4;
@@ -13,12 +13,13 @@ void QuinticGenerate(Quintic *quintic, float start_pos, float stop_pos, float st
     }
 
     quintic->start_pos = start_pos;
+    quintic->start_vel = start_vel;
     quintic->stop_pos = stop_pos;
     quintic->stop_vel = stop_vel;
     quintic->total_time = time;
 
     quintic->a0 = start_pos;
-    quintic->a1 = 0.0f;
+    quintic->a1 = start_vel;
     quintic->a2 = 0.0f;
     quintic->a3 = 0.0f;
     quintic->a4 = 0.0f;
@@ -30,16 +31,16 @@ void QuinticGenerate(Quintic *quintic, float start_pos, float stop_pos, float st
         return;
     }
 
-    delta = stop_pos - start_pos;
-    end_vel_time = stop_vel * time;
+    delta = stop_pos - start_pos - start_vel * time;
+    vel_delta_time = (stop_vel - start_vel) * time;
     time2 = time * time;
     time3 = time2 * time;
     time4 = time3 * time;
     time5 = time4 * time;
 
-    quintic->a3 = (10.0f * delta - 4.0f * end_vel_time) / time3;
-    quintic->a4 = (-15.0f * delta + 7.0f * end_vel_time) / time4;
-    quintic->a5 = (6.0f * delta - 3.0f * end_vel_time) / time5;
+    quintic->a3 = (10.0f * delta - 4.0f * vel_delta_time) / time3;
+    quintic->a4 = (-15.0f * delta + 7.0f * vel_delta_time) / time4;
+    quintic->a5 = (6.0f * delta - 3.0f * vel_delta_time) / time5;
 }
 
 bool QuinticSample(float time, float *pos, float *vel, float *acc, Quintic *quintic) {

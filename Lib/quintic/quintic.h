@@ -13,7 +13,7 @@ extern "C" {
  * 轨迹形式为:
  * position(t) = a0 + a1*t + a2*t^2 + a3*t^3 + a4*t^4 + a5*t^5
  *
- * 当前生成函数假设起点速度/加速度为0，终点加速度为0。
+ * 当前生成函数假设起点加速度为0，终点加速度为0。
  */
 typedef struct {
     float a0;
@@ -23,20 +23,22 @@ typedef struct {
     float a4;
     float a5;
     float start_pos;
+    float start_vel;
     float stop_pos;
     float stop_vel;
     float total_time;
 } Quintic;
 
 /**
- * @brief 根据起末位置和终点速度生成五次多项式轨迹参数
+ * @brief 根据起末位置和起末速度生成五次多项式轨迹参数
  * @param[in,out] quintic 轨迹参数结构体
  * @param[in] start_pos 起点位置
+ * @param[in] start_vel 起点速度
  * @param[in] stop_pos 终点位置
  * @param[in] stop_vel 终点速度
  * @param[in] time 轨迹总时间，单位与采样时间一致
  */
-void QuinticGenerate(Quintic *quintic ,float start_pos,float stop_pos,float stop_vel,float time);
+void QuinticGenerate(Quintic *quintic,float start_pos,float start_vel,float stop_pos,float stop_vel,float time);
 
 /**
  * @brief 采样五次多项式轨迹

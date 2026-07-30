@@ -192,9 +192,11 @@ static uint8_t count_line_sensors(uint8_t value)
 
 
 float line_trace_exp_vel=0.10f;
+float line_trace_exp_omega=0.0f;
 
 bool line_detected=false;
 bool enable_line_track = false;
+bool ignore_line_sensor=false;
 uint8_t line_trace_result;
 void LineTrack(void *param) {
 TickType_t pxPreviousWakeTime = xTaskGetTickCount();
@@ -205,6 +207,8 @@ float line_track_vel = 0.0f;
 float last_detected_omega = 0.0f;
   while (1) {
     line_trace_result=GWGetState();
+    if(ignore_line_sensor)
+      line_trace_result=0b11100111;     //Debug
 
     float detected_omega=0.0f;
     bool detected_any_line = false;
@@ -228,9 +232,10 @@ float last_detected_omega = 0.0f;
     if (enable_line_track) {
       enable_dir_control = false;
       robot_exp_vel = line_track_vel;
-      robot_exp_omega = line_track_omega;
+      robot_exp_omega = line_track_omega+line_trace_exp_omega;
     }
-    else {
+    else
+    {
       robot_exp_vel = 0.0f;
       robot_exp_omega = 0.0f;
     }
@@ -480,7 +485,7 @@ void K230RecvTask(void* param)
 
 
 
-float task1_finished_gate_distance=5.5f;
+float task1_finished_gate_distance=5.7f;
 float task1_distance_offset;
 TickType_t task1_start_time;
 void Task1(void* parma)
@@ -488,34 +493,32 @@ void Task1(void* parma)
     k230_cmd=0;
     task_running=true;
     vTaskDelay(pdMS_TO_TICKS(500));
-    line_trace_exp_vel=0.4f;
     task1_start_time=xTaskGetTickCount();
     TickType_t pxPreviousWakeTime = task1_start_time;
     enable_line_track=true;
     task1_distance_offset=sum_distance;
 
+    int cnt=0;
+    ignore_line_sensor=true;
+    line_trace_exp_vel=0.5f;
     while(sum_distance-task1_distance_offset<task1_finished_gate_distance)      //高速行驶到停止线前
     {
         vTaskDelayUntil(&pxPreviousWakeTime, pdMS_TO_TICKS(100));
+        cnt++;
+        if(cnt>5)
+          ignore_line_sensor=false;
     }
 
 
 
-    line_trace_exp_vel=0.15f;      //缓慢行驶直到遇到停止线
-    int cnt=0;
+    line_trace_exp_vel=0.1f;      //缓慢行驶直到遇到停止线
     while(count_line_sensors(line_trace_result) < 3)      //while退出的条件为任意3个传感器检测到黑线（黑线为0，白线为1）
     {
-      cnt++;
-        if(cnt%10==0)
-        {
-          OLED_Printf(40, 0, 16, "sensor=0x%x", ~line_trace_result);
-
-        }
         vTaskDelayUntil(&pxPreviousWakeTime, pdMS_TO_TICKS(30));
     }
 
     enable_line_track=false;
-    OLED_Printf(30, 0, 16, "time=%dms", xTaskGetTickCount()-task1_start_time);
+    OLED_Printf(0, 30, 16, "time=%dms", xTaskGetTickCount()-task1_start_time);
 
     //清理现场
     force_exit=false;
@@ -616,7 +619,8 @@ void Task3(void* param)
     exp_ball_pos=0.0f;
     enable_ball_pos_control=true;
     car_is_stop=false;
-    QuinticGenerate(&task3_quintic, sum_distance, sum_distance+1.7f, 0.1f, 7.0f);
+    QuinticGenerate(&task3_quintic, sum_distance, 0.0f, sum_distance+1.7f, 0.0f, 7.0f);
+    float init_distance=sum_distance;
     vTaskDelay(pdMS_TO_TICKS(1000));
     task3_start_time=xTaskGetTickCount();
     last_wake_time=task3_start_time;
@@ -629,6 +633,13 @@ void Task3(void* param)
         trajectory_finished=QuinticSample(time, &task3_exp_pos, &task3_exp_vel, &task3_exp_acc, &task3_quintic);
         acc_feedforward=task3_exp_acc;
         line_trace_exp_vel=task3_exp_vel+task3_pos_kp*(task3_exp_pos-sum_distance);   //求循迹速度
+
+        if(sum_distance- init_distance<0.1f)
+          ignore_line_sensor=true;
+        else
+          ignore_line_sensor=false;
+          
+
         vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(20));
     }
     
@@ -643,6 +654,182 @@ void Task3(void* param)
     while(1){vTaskDelay(1000);}
 }
 
+
+#define TASK4_CRUISE_VEL_MPS 0.20f
+#define TASK4_ARC_RADIUS_M 0.5f
+#define TASK4_ARC_DISTANCE_M (3.14159265f*TASK4_ARC_RADIUS_M)
+#define TASK4_STOP_LINE_APPROACH_DISTANCE_M 0.2f
+#define TASK4_ARC_DIRECTION (1.0f)    //方向待测
+#define TASK4_ARC_PERIOD_MS 20U
+#define TASK4_LINE_MIN_VEL_MPS 0.05f
+#define TASK4_STOP_LINE_VEL_MPS 0.15f
+
+void Task4(void* param)
+{
+    k230_cmd=1;
+    task_running=true;
+    exp_ball_pos=0.0f;
+    enable_ball_pos_control=true;
+    line_trace_exp_omega=0.0f;
+    car_is_stop=false;
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    float init_distance=sum_distance;
+
+    {     //直线段到达第一个拐弯点
+        TickType_t start_time;
+        TickType_t last_wake_time;
+        bool trajectory_finished=false;
+
+        QuinticGenerate(&task3_quintic, sum_distance, 0.0f, sum_distance+1.6f,
+                        TASK4_CRUISE_VEL_MPS, 5.3f);
+        start_time=xTaskGetTickCount();
+        last_wake_time=start_time;
+        line_trace_exp_omega=0.0f;
+        enable_line_track=true;
+
+        while(!trajectory_finished && !force_exit)
+        {
+            float time=(xTaskGetTickCount()-start_time)*portTICK_PERIOD_MS*0.001f;
+            float exp_vel;
+
+            trajectory_finished=QuinticSample(time, &task3_exp_pos, &task3_exp_vel, &task3_exp_acc, &task3_quintic);
+            acc_feedforward=task3_exp_acc;
+            exp_vel=task3_exp_vel+task3_pos_kp*(task3_exp_pos-sum_distance);   //求循迹速度
+            if(!trajectory_finished && exp_vel<TASK4_LINE_MIN_VEL_MPS)
+              exp_vel=TASK4_LINE_MIN_VEL_MPS;
+            line_trace_exp_vel=exp_vel;
+
+            if(sum_distance- init_distance<0.1f)
+              ignore_line_sensor=true;
+            else
+              ignore_line_sensor=false;
+
+            vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(20));
+        }
+
+        line_trace_exp_omega=0.0f;
+    }
+
+    if(!force_exit)   //走第一个圆弧
+    {
+        TickType_t last_wake_time=xTaskGetTickCount();
+        float start_distance=sum_distance;
+        bool arc_finished=false;
+
+        line_trace_exp_vel=TASK4_CRUISE_VEL_MPS;
+        line_trace_exp_omega=TASK4_ARC_DIRECTION*TASK4_CRUISE_VEL_MPS/TASK4_ARC_RADIUS_M;
+        acc_feedforward=0.0f;
+        enable_line_track=true;
+
+        while(!arc_finished && !force_exit)
+        {
+            arc_finished=(sum_distance-start_distance>=TASK4_ARC_DISTANCE_M);
+            vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(TASK4_ARC_PERIOD_MS));
+        }
+
+        line_trace_exp_omega=0.0f;
+    }
+
+    if(!force_exit)   //第二段直线
+    {
+        TickType_t start_time;
+        TickType_t last_wake_time;
+        bool trajectory_finished=false;
+
+        QuinticGenerate(&task3_quintic, sum_distance, 0.25f, sum_distance+1.5f,
+                        TASK4_CRUISE_VEL_MPS,5.0f);
+        start_time=xTaskGetTickCount();
+        last_wake_time=start_time;
+        line_trace_exp_omega=0.0f;
+        enable_line_track=true;
+
+        while(!trajectory_finished && !force_exit)
+        {
+            float time=(xTaskGetTickCount()-start_time)*portTICK_PERIOD_MS*0.001f;
+            float exp_vel;
+
+            trajectory_finished=QuinticSample(time, &task3_exp_pos, &task3_exp_vel, &task3_exp_acc, &task3_quintic);
+            acc_feedforward=task3_exp_acc;
+            exp_vel=task3_exp_vel+task3_pos_kp*(task3_exp_pos-sum_distance);   //求循迹速度
+            if(!trajectory_finished && exp_vel<TASK4_LINE_MIN_VEL_MPS)
+              exp_vel=TASK4_LINE_MIN_VEL_MPS;
+            line_trace_exp_vel=exp_vel;
+            vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(20));
+        }
+
+        line_trace_exp_omega=0.0f;
+    }
+
+    if(!force_exit)       //第二段圆弧
+    {
+        TickType_t last_wake_time=xTaskGetTickCount();
+        float start_distance=sum_distance;
+        float arc_distance=TASK4_ARC_DISTANCE_M-TASK4_STOP_LINE_APPROACH_DISTANCE_M;
+        bool arc_finished=(arc_distance<=0.0f);
+
+        line_trace_exp_vel=TASK4_CRUISE_VEL_MPS;
+        line_trace_exp_omega=TASK4_ARC_DIRECTION*TASK4_CRUISE_VEL_MPS/TASK4_ARC_RADIUS_M;
+        acc_feedforward=0.0f;
+        enable_line_track=true;
+
+        while(!arc_finished && !force_exit)
+        {
+            arc_finished=(sum_distance-start_distance>=arc_distance);
+            vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(TASK4_ARC_PERIOD_MS));
+
+
+            if(sum_distance-start_distance>=(arc_distance-0.1f))    //提前屏蔽寻迹模块数据防止运行到A时机器人晃动
+              ignore_line_sensor=true;
+        }
+
+        line_trace_exp_omega=0.0f;
+    }
+
+    if(!force_exit)         //最末端停止部分
+    {
+        TickType_t start_time;
+        TickType_t last_wake_time;
+        bool trajectory_finished=false;
+
+        QuinticGenerate(&task3_quintic, sum_distance, 0.25f, sum_distance+0.3f,
+                        0.0f,3.0f);
+        start_time=xTaskGetTickCount();
+        last_wake_time=start_time;
+        line_trace_exp_omega=0.0f;
+        enable_line_track=true;
+
+        while(!trajectory_finished && !force_exit)
+        {
+            float time=(xTaskGetTickCount()-start_time)*portTICK_PERIOD_MS*0.001f;
+            float exp_vel;
+
+            trajectory_finished=QuinticSample(time, &task3_exp_pos, &task3_exp_vel, &task3_exp_acc, &task3_quintic);
+            acc_feedforward=task3_exp_acc;
+            exp_vel=task3_exp_vel+task3_pos_kp*(task3_exp_pos-sum_distance);   //求循迹速度
+            if(!trajectory_finished && exp_vel<TASK4_LINE_MIN_VEL_MPS)
+              exp_vel=TASK4_LINE_MIN_VEL_MPS;
+            line_trace_exp_vel=exp_vel;
+            vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(20));
+        }
+
+        line_trace_exp_omega=0.0f;
+    }
+
+
+    ignore_line_sensor=false;
+    enable_line_track=false;
+    line_trace_exp_omega=0.0f;
+    enable_ball_pos_control=false;
+    car_is_stop=true;
+    k230_cmd=0;
+    robot_exp_vel=0.0f;
+    robot_exp_omega=0.0f;
+    current_task_id=0;
+    task_running=false;
+    force_exit=false;
+    vTaskDelete(NULL);
+    while(1){vTaskDelay(1000);}
+}
 
 float test_ball_exp_pos=0.0f;
 void TestTask(void* param)

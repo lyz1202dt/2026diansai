@@ -117,9 +117,9 @@ int app_main() {
       OLED_Printf(80, 0, 8, "     ");
     }
     //OLED
-    //OLED_Printf(0, 10, 8, "pos=(%.3f,%.3f)   ", cur_robot_pos_x,cur_robot_pos_y);
-    //OLED_Printf(0, 20, 8, "yaw=%.2f   ", cur_robot_yaw);
-    OLED_Printf(0, 20, 8, "s=%.3f   ",sum_distance);
+    OLED_Printf(0, 40, 8, "pos=(%.3f,%.3f)   ", cur_robot_pos_x,cur_robot_pos_y);
+    OLED_Printf(0, 50, 8, "yaw=%.2f   ", cur_robot_yaw);
+    OLED_Printf(0, 60, 8, "s=%.3f   ",sum_distance);
     OLED_Printf(0, 0, 16, "oled");
 
 
@@ -142,6 +142,12 @@ int app_main() {
         force_exit=false;
         task_running=true;
         xTaskCreate(Task3, "task3", 512, NULL, 2, &task_x_handle);
+    }
+    else if(current_task_id==4&&task_running==false)      //当前是第四题
+    {
+        force_exit=false;
+        task_running=true;
+        xTaskCreate(Task4, "task4", 512, NULL, 2, &task_x_handle);
     }
     SerialTransmit(g_serial, &k230_cmd, 1);         //更新K230状态
     vTaskDelayUntil(&last_wake_time,50);

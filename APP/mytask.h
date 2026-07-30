@@ -32,6 +32,7 @@ void K230RecvTask(void* param);
 void Task1(void* parma);
 void Task2(void* parma);
 void Task3(void* parma);
+void Task4(void* param);
 
 void TestTask(void* param);
 
