@@ -301,7 +301,7 @@ float stick_angle_feedforward=0.0f;
 
 //电机位置环
 PID motor_pos_pid={.Kp=0.17f,.Kd=0.3f,.Ki=0.0f,.limit=100.0f,.output_limit=10.0f};
-PID ball_pos_pid={.Kp=50.0f,.Kd=60000.0f,.Ki=0.12f,.limit=30.0f,.output_limit=6.0f};
+PID ball_pos_pid={.Kp=65.0f,.Kd=1300.0f,.Ki=1.0f,.limit=5.0f,.output_limit=6.0f};
 
 Kalman1D ball_filter;
 float stick_exp_angle=0.0f;
@@ -340,15 +340,17 @@ void ZDTDriver(void* param)
         }
         
         //用滤波后小球位置跑PID
-        if(enable_ball_pos_control)
-        {
-            PID_Control(ball_filter.position, exp_ball_pos, &ball_pos_pid);
-            motor_exp_pos=stick_angle_to_motor_angle(stick_angle_feedforward+ball_pos_pid.pid_out);
-        }
-        else
-        {
-            motor_exp_pos=k_joint_idel_angle+motor_base_angle_offset;  //如果不执行平衡控制，那么保持电机位置在中性点位置
-        }
+        // if(enable_ball_pos_control)
+        // {
+        //     PID_Control(ball_filter.position, exp_ball_pos, &ball_pos_pid);
+        //     motor_exp_pos=stick_angle_to_motor_angle(stick_angle_feedforward+ball_pos_pid.pid_out);
+        // }
+        // else
+        // {
+        //     motor_exp_pos=k_joint_idel_angle+motor_base_angle_offset;  //如果不执行平衡控制，那么保持电机位置在中性点位置
+        // }
+        if(!enable_ball_pos_control)    //如果启用了视觉控制，那么将PID闭环放在接收中
+          motor_exp_pos=k_joint_idel_angle+motor_base_angle_offset;
         
         if(motor_exp_pos>50.0f)   //防止数据异常损坏电机
           motor_exp_pos=50.0f;
@@ -437,6 +439,13 @@ void k230_pack_parse(uint8_t *src)
 
     if(raw_position<0.3f&&raw_position>-0.3f)   //数值合理才送到卡尔曼
       Kalman1D_Update(&ball_filter,raw_position , raw_acc, dt);
+
+    
+    if(enable_ball_pos_control)
+    {
+        PID_Control(ball_filter.position, exp_ball_pos, &ball_pos_pid);
+        motor_exp_pos=stick_angle_to_motor_angle(stick_angle_feedforward+ball_pos_pid.pid_out);
+    }
 
 
     vofa_value[0]=raw_position;
@@ -581,15 +590,12 @@ void Task2(void* parma)
     enable_ball_pos_control=true;
     vTaskDelay(pdMS_TO_TICKS(100));
 
-    task2_start_pos = ball_filter.position;
-    if (task2_start_pos > 0.3f || task2_start_pos < -0.3f) {
-        task2_start_pos = exp_ball_pos;
+    Task2RunCubicSegment(ball_filter.position,0.057, 1.0f);
+    while(ball_filter.position-0.045<-0.007f)
+    {
+      vTaskDelay(pdMS_TO_TICKS(50));
     }
-
-    exp_ball_pos=task2_start_pos;
-
-    Task2RunCubicSegment(task2_start_pos,0.06, 1.0f);
-    Task2RunCubicSegment(exp_ball_pos, -0.053, 3.0f);
+    Task2RunCubicSegment(ball_filter.position, -0.045, 2.0f);
 
     while(!force_exit)  //等待强制退出信号
     {
@@ -655,14 +661,48 @@ void Task3(void* param)
 }
 
 
-#define TASK4_CRUISE_VEL_MPS 0.20f
+#define TASK4_CRUISE_VEL_MPS 0.27f
 #define TASK4_ARC_RADIUS_M 0.5f
 #define TASK4_ARC_DISTANCE_M (3.14159265f*TASK4_ARC_RADIUS_M)
 #define TASK4_STOP_LINE_APPROACH_DISTANCE_M 0.2f
 #define TASK4_ARC_DIRECTION (1.0f)    //方向待测
 #define TASK4_ARC_PERIOD_MS 20U
+#define TASK4_ARC_OMEGA_RAMP_TIME_S 0.5f
 #define TASK4_LINE_MIN_VEL_MPS 0.05f
 #define TASK4_STOP_LINE_VEL_MPS 0.15f
+#define TASK4_FINAL_STOP_DISTANCE_M 0.3f
+
+static float Task4RampArcOmega(float target_omega, TickType_t start_time, float start_distance, float arc_distance)
+{
+    float elapsed_time=(xTaskGetTickCount()-start_time)*portTICK_PERIOD_MS*0.001f;
+    float ramp_in_ratio;
+    float ramp_out_distance=TASK4_CRUISE_VEL_MPS*TASK4_ARC_OMEGA_RAMP_TIME_S;
+    float traveled_distance=sum_distance-start_distance;
+    float remaining_distance=arc_distance-traveled_distance;
+    float ramp_out_ratio;
+    float ramp_ratio;
+
+    if(arc_distance<=0.0f)
+      return 0.0f;
+
+    if(elapsed_time<=0.0f)
+      ramp_in_ratio=0.0f;
+    else if(elapsed_time>=TASK4_ARC_OMEGA_RAMP_TIME_S)
+      ramp_in_ratio=1.0f;
+    else
+      ramp_in_ratio=elapsed_time/TASK4_ARC_OMEGA_RAMP_TIME_S;
+
+    if(remaining_distance<=0.0f)
+      ramp_out_ratio=0.0f;
+    else if(remaining_distance>=ramp_out_distance)
+      ramp_out_ratio=1.0f;
+    else
+      ramp_out_ratio=remaining_distance/ramp_out_distance;
+
+    ramp_ratio=(ramp_in_ratio<ramp_out_ratio)?ramp_in_ratio:ramp_out_ratio;
+
+    return target_omega*ramp_ratio;
+}
 
 void Task4(void* param)
 {
@@ -672,7 +712,17 @@ void Task4(void* param)
     enable_ball_pos_control=true;
     line_trace_exp_omega=0.0f;
     car_is_stop=false;
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    
+    while(DL_GPIO_readPins(KEY3_PORT, KEY3_K3_PIN))    //等待直到按键按下，表示开始执行
+    {
+      vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    while(!DL_GPIO_readPins(KEY3_PORT, KEY3_K3_PIN))    //等待按键松开
+    {
+      vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    vTaskDelay(pdMS_TO_TICKS(300));
+    
     float init_distance=sum_distance;
 
     {     //直线段到达第一个拐弯点
@@ -712,17 +762,20 @@ void Task4(void* param)
 
     if(!force_exit)   //走第一个圆弧
     {
-        TickType_t last_wake_time=xTaskGetTickCount();
+        TickType_t arc_start_time=xTaskGetTickCount();
+        TickType_t last_wake_time=arc_start_time;
         float start_distance=sum_distance;
+        float target_omega=TASK4_ARC_DIRECTION*TASK4_CRUISE_VEL_MPS/TASK4_ARC_RADIUS_M;
         bool arc_finished=false;
 
         line_trace_exp_vel=TASK4_CRUISE_VEL_MPS;
-        line_trace_exp_omega=TASK4_ARC_DIRECTION*TASK4_CRUISE_VEL_MPS/TASK4_ARC_RADIUS_M;
+        line_trace_exp_omega=0.0f;
         acc_feedforward=0.0f;
         enable_line_track=true;
 
         while(!arc_finished && !force_exit)
         {
+            line_trace_exp_omega=Task4RampArcOmega(target_omega, arc_start_time, start_distance, TASK4_ARC_DISTANCE_M);
             arc_finished=(sum_distance-start_distance>=TASK4_ARC_DISTANCE_M);
             vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(TASK4_ARC_PERIOD_MS));
         }
@@ -736,7 +789,7 @@ void Task4(void* param)
         TickType_t last_wake_time;
         bool trajectory_finished=false;
 
-        QuinticGenerate(&task3_quintic, sum_distance, 0.25f, sum_distance+1.5f,
+        QuinticGenerate(&task3_quintic, sum_distance, TASK4_CRUISE_VEL_MPS, sum_distance+1.5f,
                         TASK4_CRUISE_VEL_MPS,5.0f);
         start_time=xTaskGetTickCount();
         last_wake_time=start_time;
@@ -762,18 +815,21 @@ void Task4(void* param)
 
     if(!force_exit)       //第二段圆弧
     {
-        TickType_t last_wake_time=xTaskGetTickCount();
+        TickType_t arc_start_time=xTaskGetTickCount();
+        TickType_t last_wake_time=arc_start_time;
         float start_distance=sum_distance;
         float arc_distance=TASK4_ARC_DISTANCE_M-TASK4_STOP_LINE_APPROACH_DISTANCE_M;
+        float target_omega=TASK4_ARC_DIRECTION*TASK4_CRUISE_VEL_MPS/TASK4_ARC_RADIUS_M;
         bool arc_finished=(arc_distance<=0.0f);
 
         line_trace_exp_vel=TASK4_CRUISE_VEL_MPS;
-        line_trace_exp_omega=TASK4_ARC_DIRECTION*TASK4_CRUISE_VEL_MPS/TASK4_ARC_RADIUS_M;
+        line_trace_exp_omega=0.0f;
         acc_feedforward=0.0f;
         enable_line_track=true;
 
         while(!arc_finished && !force_exit)
         {
+            line_trace_exp_omega=Task4RampArcOmega(target_omega, arc_start_time, start_distance, arc_distance);
             arc_finished=(sum_distance-start_distance>=arc_distance);
             vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(TASK4_ARC_PERIOD_MS));
 
@@ -787,12 +843,156 @@ void Task4(void* param)
 
     if(!force_exit)         //最末端停止部分
     {
+        TickType_t last_wake_time=xTaskGetTickCount();
+        float start_distance=sum_distance;
+        float stop_decel=TASK4_CRUISE_VEL_MPS*TASK4_CRUISE_VEL_MPS/(2.0f*TASK4_FINAL_STOP_DISTANCE_M);
+        bool stop_finished=false;
+
+        line_trace_exp_omega=0.0f;
+        acc_feedforward=-stop_decel;
+        enable_line_track=true;
+
+        while(!stop_finished && !force_exit)
+        {
+            float traveled_distance=sum_distance-start_distance;
+            float vel_square=TASK4_CRUISE_VEL_MPS*TASK4_CRUISE_VEL_MPS-2.0f*stop_decel*traveled_distance;
+
+            stop_finished=(traveled_distance>=TASK4_FINAL_STOP_DISTANCE_M);
+            if(stop_finished || vel_square<=0.0f)
+              line_trace_exp_vel=0.0f;
+            else
+              line_trace_exp_vel=sqrtf(vel_square);
+
+            vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(20));
+        }
+
+        line_trace_exp_omega=0.0f;
+        line_trace_exp_vel=0.0f;
+        acc_feedforward=0.0f;
+    }
+
+
+    ignore_line_sensor=false;
+    enable_line_track=false;
+    line_trace_exp_omega=0.0f;
+    enable_ball_pos_control=false;
+    car_is_stop=true;
+    k230_cmd=0;
+    robot_exp_vel=0.0f;
+    robot_exp_omega=0.0f;
+    current_task_id=0;
+    task_running=false;
+    force_exit=false;
+    vTaskDelete(NULL);
+    while(1){vTaskDelay(1000);}
+}
+
+
+void Task5(void* param)
+{
+    k230_cmd=1;
+    task_running=true;
+    
+    line_trace_exp_omega=0.0f;
+    car_is_stop=false;
+    
+
+    while(DL_GPIO_readPins(KEY3_PORT, KEY3_K3_PIN))
+    {
+      vTaskDelay(pdMS_TO_TICKS(50));    //等待直到按键按下，表示将当前钢球的位置设为期望它在运行时处于的位置
+    }
+    while(!DL_GPIO_readPins(KEY3_PORT, KEY3_K3_PIN))
+    {
+      vTaskDelay(pdMS_TO_TICKS(50));    //等待按键松开
+    }
+    
+    float average_pos=0.0f;
+    for(int i=0;i<8;i++)
+    {
+      average_pos+=ball_filter.position/8.0f;
+      vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    exp_ball_pos=average_pos;
+    enable_ball_pos_control=true;
+    while(DL_GPIO_readPins(KEY3_PORT, KEY3_K3_PIN))    //等待直到按键按下，表示开始执行
+    {
+      vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    while(!DL_GPIO_readPins(KEY3_PORT, KEY3_K3_PIN))    //等待按键松开
+    {
+      vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    vTaskDelay(pdMS_TO_TICKS(300));
+    
+    float init_distance=sum_distance;
+
+    {     //直线段到达第一个拐弯点
         TickType_t start_time;
         TickType_t last_wake_time;
         bool trajectory_finished=false;
 
-        QuinticGenerate(&task3_quintic, sum_distance, 0.25f, sum_distance+0.3f,
-                        0.0f,3.0f);
+        QuinticGenerate(&task3_quintic, sum_distance, 0.0f, sum_distance+1.6f,
+                        TASK4_CRUISE_VEL_MPS, 5.3f);
+        start_time=xTaskGetTickCount();
+        last_wake_time=start_time;
+        line_trace_exp_omega=0.0f;
+        enable_line_track=true;
+
+        while(!trajectory_finished && !force_exit)
+        {
+            float time=(xTaskGetTickCount()-start_time)*portTICK_PERIOD_MS*0.001f;
+            float exp_vel;
+
+            trajectory_finished=QuinticSample(time, &task3_exp_pos, &task3_exp_vel, &task3_exp_acc, &task3_quintic);
+            acc_feedforward=task3_exp_acc;
+            exp_vel=task3_exp_vel+task3_pos_kp*(task3_exp_pos-sum_distance);   //求循迹速度
+            if(!trajectory_finished && exp_vel<TASK4_LINE_MIN_VEL_MPS)
+              exp_vel=TASK4_LINE_MIN_VEL_MPS;
+            line_trace_exp_vel=exp_vel;
+
+            if(sum_distance- init_distance<0.1f)
+              ignore_line_sensor=true;
+            else
+              ignore_line_sensor=false;
+
+            vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(20));
+        }
+
+        line_trace_exp_omega=0.0f;
+    }
+
+    if(!force_exit)   //走第一个圆弧
+    {
+        TickType_t arc_start_time=xTaskGetTickCount();
+        TickType_t last_wake_time=arc_start_time;
+        float start_distance=sum_distance;
+        float target_omega=TASK4_ARC_DIRECTION*TASK4_CRUISE_VEL_MPS/TASK4_ARC_RADIUS_M;
+        bool arc_finished=false;
+
+        line_trace_exp_vel=TASK4_CRUISE_VEL_MPS;
+        line_trace_exp_omega=0.0f;
+        acc_feedforward=0.0f;
+        enable_line_track=true;
+
+        while(!arc_finished && !force_exit)
+        {
+            line_trace_exp_omega=Task4RampArcOmega(target_omega, arc_start_time, start_distance, TASK4_ARC_DISTANCE_M);
+            arc_finished=(sum_distance-start_distance>=TASK4_ARC_DISTANCE_M);
+            vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(TASK4_ARC_PERIOD_MS));
+        }
+
+        line_trace_exp_omega=0.0f;
+    }
+
+    if(!force_exit)   //第二段直线
+    {
+        TickType_t start_time;
+        TickType_t last_wake_time;
+        bool trajectory_finished=false;
+
+        QuinticGenerate(&task3_quintic, sum_distance, TASK4_CRUISE_VEL_MPS, sum_distance+1.5f,
+                        TASK4_CRUISE_VEL_MPS,5.0f);
         start_time=xTaskGetTickCount();
         last_wake_time=start_time;
         line_trace_exp_omega=0.0f;
@@ -815,6 +1015,64 @@ void Task4(void* param)
         line_trace_exp_omega=0.0f;
     }
 
+    if(!force_exit)       //第二段圆弧
+    {
+        TickType_t arc_start_time=xTaskGetTickCount();
+        TickType_t last_wake_time=arc_start_time;
+        float start_distance=sum_distance;
+        float arc_distance=TASK4_ARC_DISTANCE_M-TASK4_STOP_LINE_APPROACH_DISTANCE_M;
+        float target_omega=TASK4_ARC_DIRECTION*TASK4_CRUISE_VEL_MPS/TASK4_ARC_RADIUS_M;
+        bool arc_finished=(arc_distance<=0.0f);
+
+        line_trace_exp_vel=TASK4_CRUISE_VEL_MPS;
+        line_trace_exp_omega=0.0f;
+        acc_feedforward=0.0f;
+        enable_line_track=true;
+
+        while(!arc_finished && !force_exit)
+        {
+            line_trace_exp_omega=Task4RampArcOmega(target_omega, arc_start_time, start_distance, arc_distance);
+            arc_finished=(sum_distance-start_distance>=arc_distance);
+            vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(TASK4_ARC_PERIOD_MS));
+
+
+            if(sum_distance-start_distance>=(arc_distance-0.1f))    //提前屏蔽寻迹模块数据防止运行到A时机器人晃动
+              ignore_line_sensor=true;
+        }
+
+        line_trace_exp_omega=0.0f;
+    }
+
+    if(!force_exit)         //最末端停止部分
+    {
+        TickType_t last_wake_time=xTaskGetTickCount();
+        float start_distance=sum_distance;
+        float stop_decel=TASK4_CRUISE_VEL_MPS*TASK4_CRUISE_VEL_MPS/(2.0f*TASK4_FINAL_STOP_DISTANCE_M);
+        bool stop_finished=false;
+
+        line_trace_exp_omega=0.0f;
+        acc_feedforward=-stop_decel;
+        enable_line_track=true;
+
+        while(!stop_finished && !force_exit)
+        {
+            float traveled_distance=sum_distance-start_distance;
+            float vel_square=TASK4_CRUISE_VEL_MPS*TASK4_CRUISE_VEL_MPS-2.0f*stop_decel*traveled_distance;
+
+            stop_finished=(traveled_distance>=TASK4_FINAL_STOP_DISTANCE_M);
+            if(stop_finished || vel_square<=0.0f)
+              line_trace_exp_vel=0.0f;
+            else
+              line_trace_exp_vel=sqrtf(vel_square);
+
+            vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(20));
+        }
+
+        line_trace_exp_omega=0.0f;
+        line_trace_exp_vel=0.0f;
+        acc_feedforward=0.0f;
+    }
+
 
     ignore_line_sensor=false;
     enable_line_track=false;
@@ -830,6 +1088,7 @@ void Task4(void* param)
     vTaskDelete(NULL);
     while(1){vTaskDelay(1000);}
 }
+
 
 float test_ball_exp_pos=0.0f;
 void TestTask(void* param)

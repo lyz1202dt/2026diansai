@@ -80,7 +80,7 @@ int app_main() {
       //enable_line_track=0;
       current_task_id=current_select_task_id;
     }
-    // else if(!DL_GPIO_readPins(KEY3_PORT, KEY3_K3_PIN))   //里程计复位
+    // else if(!DL_GPIO_readPins(KEY3_PORT, KEY3_K3_PIN))   //里程计复位(APP使用了)
     // {
     //   OLED_Printf(90, 0, 8, "k3-3");
     //   cur_robot_pos_x=0.0f;
@@ -149,6 +149,13 @@ int app_main() {
         task_running=true;
         xTaskCreate(Task4, "task4", 512, NULL, 2, &task_x_handle);
     }
+    else if(current_task_id==5&&task_running==false)      //当前是第四题
+    {
+        force_exit=false;
+        task_running=true;
+        xTaskCreate(Task5, "task5", 512, NULL, 2, &task_x_handle);
+    }
+    
     SerialTransmit(g_serial, &k230_cmd, 1);         //更新K230状态
     vTaskDelayUntil(&last_wake_time,50);
   }

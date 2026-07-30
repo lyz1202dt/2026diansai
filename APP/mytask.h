@@ -33,6 +33,7 @@ void Task1(void* parma);
 void Task2(void* parma);
 void Task3(void* parma);
 void Task4(void* param);
+void Task5(void* param);
 
 void TestTask(void* param);
 
