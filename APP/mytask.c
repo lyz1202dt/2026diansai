@@ -564,47 +564,6 @@ void Task1(void* parma)
 }
 
 
-#define TASK2_CUBIC_PERIOD_MS 20U
-
-static float Task2CubicInterpolate(float start_pos, float stop_pos, float time, float total_time)
-{
-    float s;
-
-    if (total_time <= 0.0f) {
-        return stop_pos;
-    }
-
-    if (time <= 0.0f) {
-        return start_pos;
-    }
-
-    if (time >= total_time) {
-        return stop_pos;
-    }
-
-    s = time / total_time;
-    return start_pos + (stop_pos - start_pos) * (3.0f * s * s - 2.0f * s * s * s);
-}
-
-static void Task2RunCubicSegment(float start_pos, float stop_pos, float total_time)
-{
-    TickType_t start_time = xTaskGetTickCount();
-    TickType_t last_wake_time = start_time;
-    bool trajectory_running = true;
-
-    while (trajectory_running && !force_exit) {
-        float time = (xTaskGetTickCount() - start_time) * 0.001f;
-
-        exp_ball_pos = Task2CubicInterpolate(start_pos, stop_pos, time, total_time);
-        trajectory_running = (time < total_time);
-        vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(TASK2_CUBIC_PERIOD_MS));
-    }
-
-    if (!force_exit) {
-        exp_ball_pos = stop_pos;
-    }
-}
-
 void Task2(void* parma)
 {
     float task2_start_pos;
@@ -616,12 +575,13 @@ void Task2(void* parma)
     enable_ball_pos_control=true;
     vTaskDelay(pdMS_TO_TICKS(100));
 
-    Task2RunCubicSegment(ball_filter.position,0.057, 1.0f);
+    //Task2RunCubicSegment(ball_filter.position,0.057, 1.0f);
+    exp_ball_pos=0.06f;
     while(ball_filter.position-0.045<-0.007f)
     {
       vTaskDelay(pdMS_TO_TICKS(50));
     }
-    Task2RunCubicSegment(ball_filter.position, -0.045, 2.0f);
+    exp_ball_pos= -0.045;
 
     while(!force_exit)  //等待强制退出信号
     {
@@ -783,7 +743,10 @@ void Task4(void* param)
                         TASK4_CRUISE_VEL_MPS, 5.3f);
         start_time=xTaskGetTickCount();
         last_wake_time=start_time;
+        line_trace_exp_vel=0.0f;
         line_trace_exp_omega=0.0f;
+        acc_feedforward=0.0f;
+        ignore_line_sensor=true;
         enable_line_track=true;
 
         while(!trajectory_finished && !force_exit)
@@ -794,7 +757,7 @@ void Task4(void* param)
             trajectory_finished=QuinticSample(time, &task3_exp_pos, &task3_exp_vel, &task3_exp_acc, &task3_quintic);
             acc_feedforward=task3_exp_acc;
             exp_vel=task3_exp_vel+task3_pos_kp*(task3_exp_pos-sum_distance);   //求循迹速度
-            if(!trajectory_finished && exp_vel<TASK4_LINE_MIN_VEL_MPS)
+            if(!trajectory_finished && (sum_distance-init_distance)>=0.1f && exp_vel<TASK4_LINE_MIN_VEL_MPS)
               exp_vel=TASK4_LINE_MIN_VEL_MPS;
             line_trace_exp_vel=exp_vel;
 
