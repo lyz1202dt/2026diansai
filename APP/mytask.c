@@ -254,7 +254,7 @@ float kBallDistanceOffset=-0.005f;
 #define BASE_HEIGHT     0.04f
 #define STICK_LENGTH    0.25f
 #define PIXEL2POSITION(x) ((x)*0.01f+kBallDistanceOffset)   //换算成国际单位
-#define BALL_POS_TO_CENTER_DIS(x) ((x)+0.20f)
+#define BALL_POS_TO_CENTER_DIS(x) ((-x)+0.11f)
 
 float motor_base_angle_offset=0.48f;    //注意：单位是度
 
@@ -320,11 +320,19 @@ void ZDTDriver(void* param)
         Emm_V5_GetPos(0x03,zdt_recv_buf,&angle_temp);
         joint_cur_pos=-angle_temp;
 
-        // if(!car_is_stop)
-        // {
-        //     float forward_acc=-BALL_POS_TO_CENTER_DIS(ball_filter.position)*mpu6050_yaw_rate_dps*mpu6050_yaw_rate_dps+acc_feedforward;
-        //     stick_angle_feedforward=RAD2ANGLE(asinf(forward_acc/9.8f));    //补偿自旋和加速前进所需的角度
-        // }
+        if(!car_is_stop)
+        {
+            float yaw_rate_rad_s=mpu6050_yaw_rate_dps*DEG_TO_RAD;
+            float forward_acc=BALL_POS_TO_CENTER_DIS(ball_filter.position)*yaw_rate_rad_s*yaw_rate_rad_s-acc_feedforward;
+            float gravity_ratio=forward_acc/9.8f;
+
+            if(gravity_ratio>1.0f)
+              gravity_ratio=1.0f;
+            else if(gravity_ratio<-1.0f)
+              gravity_ratio=-1.0f;
+
+            stick_angle_feedforward=RAD2ANGLE(asinf(gravity_ratio));    //补偿自旋和加速前进所需的角度
+        }
         
         //用滤波后小球位置跑PID
         if(enable_ball_pos_control)
@@ -606,8 +614,8 @@ void Task3(void* param)
     k230_cmd=1;
     task_running=true;
     exp_ball_pos=0.0f;
-    enable_ball_pos_control=false;
-    car_is_stop=true;
+    enable_ball_pos_control=true;
+    car_is_stop=false;
     QuinticGenerate(&task3_quintic, sum_distance, sum_distance+1.7f, 0.1f, 7.0f);
     vTaskDelay(pdMS_TO_TICKS(1000));
     task3_start_time=xTaskGetTickCount();
