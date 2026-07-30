@@ -36,6 +36,8 @@ extern uint8_t k230_cmd;
 extern bool task_running;
 extern bool force_exit;
 extern int current_task_id;
+extern char vofa_data_buffer[128];
+extern float ball_pid_output_filter_gate;
 
 // IMU
 float mpu6050_yaw;
@@ -162,11 +164,6 @@ void WheelTask(void *param) {
       cur_robot_pos_y += vy * WHEEL_TASK_PERIOD_S;
     }
 
-    // vofa_value[0]=m1_cur_omega;
-    // vofa_value[1]=m1_exp_omega;
-    // vofa_value[2]=m2_cur_omega;
-    // vofa_value[3]=m2_exp_omega;
-
     vTaskDelayUntil(&pxPreviousWakeTime, pdMS_TO_TICKS(5));
   }
 }
@@ -256,7 +253,7 @@ uint8_t zdt_recv_buf[32];
 uint8_t zdt_recv_cnt;
 float joint_cur_pos;
 
-float kBallDistanceOffset=-0.005f;
+float kBallDistanceOffset=-0.003f;
 
 #define RAD2ANGLE(x) ((x)*180.0f/3.14159265f)
 #define ANGLE2RAD(x) ((x)*3.14159265f/180.0f)
@@ -265,9 +262,9 @@ float kBallDistanceOffset=-0.005f;
 #define STICK_LENGTH    0.25f
 #define PIXEL2POSITION(x) ((x)*0.01f+kBallDistanceOffset)   //换算成国际单位
 #define BALL_POS_TO_CENTER_DIS(x) ((-x)+0.11f)
-#define MOTOR_EXP_POS_MAX_STEP_DEG 5.0f
+#define MOTOR_EXP_POS_MAX_STEP_DEG 3.0f
 
-float motor_base_angle_offset=0.48f;    //注意：单位是度
+float motor_base_angle_offset=-1.0f;    //注意：单位是度
 
 static float stick_angle_to_motor_angle(float angle)
 {
@@ -327,21 +324,22 @@ static float limit_motor_exp_pos_step(float target_pos)
     return target_pos;
 }
 
+#define MOTOR_ID 0x02
 
 float test_pos=0.0f;
 //钢球位置控制
 void ZDTDriver(void* param)
 {
-    Kalman1D_Init(&ball_filter, 0.0f, 0.0f, 10.0f, 0.0001f, 0.1f);
+    Kalman1D_Init(&ball_filter, 0.0f, 0.0f, 8.0f, 0.003f, 0.1f);
     //初始化张大头串口环境
     MakeZDTSerialEnv(zdt_serial);
     BaseType_t last_wake_time=xTaskGetTickCount();
     while(1)
     {
         float angle_temp=0.0f;
-        Emm_V5_Read_Sys_Params(0x03, S_CPOS);
+        Emm_V5_Read_Sys_Params(MOTOR_ID, S_CPOS);
         uart_Receive_Data(zdt_recv_buf, 8,&zdt_recv_cnt);
-        Emm_V5_GetPos(0x03,zdt_recv_buf,&angle_temp);
+        Emm_V5_GetPos(MOTOR_ID,zdt_recv_buf,&angle_temp);
         joint_cur_pos=-angle_temp;
 
         if(!car_is_stop)
@@ -378,7 +376,7 @@ void ZDTDriver(void* param)
         
         //PID_Control(joint_cur_pos, motor_exp_pos, &motor_pos_pid);
         //SetMotorVel(0x03,-(motor_exp_omega+motor_pos_pid.pid_out));
-        Emm_V5_Pos_ControlEx(0x03,-motor_exp_pos,-joint_cur_pos,0.004f);
+        Emm_V5_Pos_ControlEx(MOTOR_ID,-motor_exp_pos,-joint_cur_pos,0.004f);
         uart_Receive_Data(zdt_recv_buf,4, &zdt_recv_cnt);
         vTaskDelayUntil(&last_wake_time,pdMS_TO_TICKS(4));
     }
@@ -444,8 +442,12 @@ static uint16_t K230CommResync(uint8_t *buffer)
 
 TickType_t last_ball_pos_update_time=0;
 
-PID ball_pos_pid={.Kp=6.0f,.Kd=1.0f,.Ki=0.0f,.limit=5.0f,.output_limit=0.12f};
-PID ball_vel_pid={.Kp=45.0f,.Kd=0.0f,.Ki=2.0f,.limit=5.0f,.output_limit=6.0f};
+//float debug_q=10.0f,debug_r=0.0001f;
+
+PID ball_pos_pid={.Kp=5.0f,.Kd=0.0f,.Ki=0.0f,.limit=5.0f,.output_limit=0.12f};
+PID ball_vel_pid={.Kp=45.0f,.Kd=0.0f,.Ki=1.0f,.limit=10.0f,.output_limit=6.0f};
+
+float ball_pid_output_filter_gate=0.0f;   //0.8f
 
 void k230_pack_parse(uint8_t *src)
 {
@@ -461,6 +463,8 @@ void k230_pack_parse(uint8_t *src)
         dt=0.08f;
     last_ball_pos_update_time=xTaskGetTickCount();
 
+    //Kalman1D_SetNoise(&ball_filter, debug_q, debug_r);  //Debug
+    
     if(raw_position<0.3f&&raw_position>-0.3f)   //数值合理才送到卡尔曼
       Kalman1D_Update(&ball_filter,raw_position , raw_acc, dt);
 
@@ -470,14 +474,20 @@ void k230_pack_parse(uint8_t *src)
         PID_Control(ball_filter.position, exp_ball_pos, &ball_pos_pid);
         PID_Control(ball_filter.velocity,ball_pos_pid.pid_out, &ball_vel_pid);
         float target_motor_exp_pos=stick_angle_to_motor_angle(stick_angle_feedforward+ball_vel_pid.pid_out);
-        motor_exp_pos=limit_motor_exp_pos_step(target_motor_exp_pos);
+        //motor_exp_pos=ball_pid_output_filter_gate*motor_exp_pos+(1.0f-ball_pid_output_filter_gate)*target_motor_exp_pos;//limit_motor_exp_pos_step();
+        motor_exp_pos=ball_pid_output_filter_gate*motor_exp_pos+(1.0f-ball_pid_output_filter_gate)*target_motor_exp_pos;
     }
 
 
+
+  
+    //Debug
     vofa_value[0]=raw_position;
     vofa_value[1]=ball_filter.position;
-    vofa_value[2]=raw_acc;
-    vofa_value[3]=ball_filter.velocity;
+    vofa_value[2]=ball_filter.velocity;
+
+    sprintf(vofa_data_buffer,"%.3f,%.3f,%.3f\n",vofa_value[0],vofa_value[1],vofa_value[2]);
+    SerialTransmit(vofa_serial,  vofa_data_buffer, strlen(vofa_data_buffer));
 }
 
 void K230RecvTask(void* param)

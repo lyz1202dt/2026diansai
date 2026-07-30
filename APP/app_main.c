@@ -60,8 +60,8 @@ int app_main() {
   xTaskCreate(IMUTask, "imu_task", 256, NULL, 5, &imu_task_handle);
   xTaskCreate(LineTrack, "line_track", 128, NULL, 4, &line_track_task_handle);
   xTaskCreate(ZDTDriver,"zdt_driver",128,NULL, 5,&zdt_driver_task_handle);
-  xTaskCreate(K230RecvTask,"k230_recv",256,NULL, 4,&k230_recv_task_handle);
-  xTaskCreate(TestTask, "test_task",128, NULL, 2, &test_task_handle);
+  xTaskCreate(K230RecvTask,"k230_recv",512,NULL, 4,&k230_recv_task_handle);
+  //xTaskCreate(TestTask, "test_task",128, NULL, 2, &test_task_handle);
   //xTaskCreate(VOFA_Task,"vofa",512,NULL, 1,&vofa_comm_task_handle);
   
   
