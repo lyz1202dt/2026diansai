@@ -246,13 +246,14 @@ uint8_t zdt_recv_buf[32];
 uint8_t zdt_recv_cnt;
 float joint_cur_pos;
 
+float kBallDistanceOffset=-0.005f;
 
 #define RAD2ANGLE(x) ((x)*180.0f/3.14159265f)
 #define ANGLE2RAD(x) ((x)*3.14159265f/180.0f)
 #define SUPPORT_STICK_RADIUS 0.05f 
 #define BASE_HEIGHT     0.04f
 #define STICK_LENGTH    0.25f
-#define PIXEL2POSITION(x) ((x)*1.0f)
+#define PIXEL2POSITION(x) ((x)*0.01f+kBallDistanceOffset)   //换算成国际单位
 #define BALL_POS_TO_CENTER_DIS(x) ((x)+0.20f)
 
 float motor_base_angle_offset=0.48f;    //注意：单位是度
@@ -281,7 +282,7 @@ static float motor_angle_to_stick_angle(float angle)
 
 
 //参数常量
-const float k_joint_idel_angle=30.0f;
+const float k_joint_idel_angle=28.0f;
 
 //对外暴露的接口
 bool enable_ball_pos_control=false;
@@ -295,7 +296,7 @@ float stick_angle_feedforward=0.0f;
 
 //电机位置环
 PID motor_pos_pid={.Kp=0.17f,.Kd=0.3f,.Ki=0.0f,.limit=100.0f,.output_limit=10.0f};
-PID ball_pos_pid={.Kp=0.0f,.Kd=0.0f,.Ki=0.0f,.limit=100.0f,.output_limit=15.0f};
+PID ball_pos_pid={.Kp=50.0f,.Kd=60000.0f,.Ki=0.12f,.limit=30.0f,.output_limit=6.0f};
 
 Kalman1D ball_filter;
 float stick_exp_angle=0.0f;
@@ -319,19 +320,19 @@ void ZDTDriver(void* param)
         Emm_V5_GetPos(0x03,zdt_recv_buf,&angle_temp);
         joint_cur_pos=-angle_temp;
 
-        if(!car_is_stop)
-        {
-            float forward_acc=-BALL_POS_TO_CENTER_DIS(ball_filter.position)*mpu6050_yaw_rate_dps*mpu6050_yaw_rate_dps+acc_feedforward;
-            stick_angle_feedforward=RAD2ANGLE(asinf(forward_acc/9.8f));    //补偿自旋和加速前进所需的角度
-        }
+        // if(!car_is_stop)
+        // {
+        //     float forward_acc=-BALL_POS_TO_CENTER_DIS(ball_filter.position)*mpu6050_yaw_rate_dps*mpu6050_yaw_rate_dps+acc_feedforward;
+        //     stick_angle_feedforward=RAD2ANGLE(asinf(forward_acc/9.8f));    //补偿自旋和加速前进所需的角度
+        // }
         
         //用滤波后小球位置跑PID
-        // if(enable_ball_pos_control)
-        // {
-        //     PID_Control(ball_filter.position, exp_ball_pos, &ball_pos_pid);
-        //     motor_exp_pos=stick_angle_to_motor_angle(car_rotation_feedforward+ball_pos_pid.pid_out);
-        // }
-        // else
+        if(enable_ball_pos_control)
+        {
+            PID_Control(ball_filter.position, exp_ball_pos, &ball_pos_pid);
+            motor_exp_pos=stick_angle_to_motor_angle(stick_angle_feedforward+ball_pos_pid.pid_out);
+        }
+        else
         {
             motor_exp_pos=k_joint_idel_angle+motor_base_angle_offset;  //如果不执行平衡控制，那么保持电机位置在中性点位置
         }
@@ -421,7 +422,8 @@ void k230_pack_parse(uint8_t *src)
         dt=0.08f;
     last_ball_pos_update_time=xTaskGetTickCount();
 
-    Kalman1D_Update(&ball_filter,raw_position , raw_acc, dt);
+    if(raw_position<0.3f&&raw_position>-0.3f)   //数值合理才送到卡尔曼
+      Kalman1D_Update(&ball_filter,raw_position , raw_acc, dt);
 
 
     vofa_value[0]=raw_position;
@@ -508,6 +510,7 @@ void Task1(void* parma)
     OLED_Printf(30, 0, 16, "time=%dms", xTaskGetTickCount()-task1_start_time);
 
     //清理现场
+    force_exit=false;
     task_running=false;
     current_task_id=0;
     vTaskDelete(NULL);
@@ -515,20 +518,67 @@ void Task1(void* parma)
 }
 
 
+#define TASK2_CUBIC_PERIOD_MS 20U
+
+static float Task2CubicInterpolate(float start_pos, float stop_pos, float time, float total_time)
+{
+    float s;
+
+    if (total_time <= 0.0f) {
+        return stop_pos;
+    }
+
+    if (time <= 0.0f) {
+        return start_pos;
+    }
+
+    if (time >= total_time) {
+        return stop_pos;
+    }
+
+    s = time / total_time;
+    return start_pos + (stop_pos - start_pos) * (3.0f * s * s - 2.0f * s * s * s);
+}
+
+static void Task2RunCubicSegment(float start_pos, float stop_pos, float total_time)
+{
+    TickType_t start_time = xTaskGetTickCount();
+    TickType_t last_wake_time = start_time;
+    bool trajectory_running = true;
+
+    while (trajectory_running && !force_exit) {
+        float time = (xTaskGetTickCount() - start_time) * 0.001f;
+
+        exp_ball_pos = Task2CubicInterpolate(start_pos, stop_pos, time, total_time);
+        trajectory_running = (time < total_time);
+        vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(TASK2_CUBIC_PERIOD_MS));
+    }
+
+    if (!force_exit) {
+        exp_ball_pos = stop_pos;
+    }
+}
+
 void Task2(void* parma)
 {
+    float task2_start_pos;
+
     k230_cmd=1;
     task_running=true;
     enable_line_track=false;
     force_exit=false;
     enable_ball_pos_control=true;
     vTaskDelay(pdMS_TO_TICKS(100));
-    exp_ball_pos=0.05f;
-    while(fabsf(ball_filter.position-0.05f)>0.007)
-    {
-        vTaskDelay(20);
+
+    task2_start_pos = ball_filter.position;
+    if (task2_start_pos > 0.3f || task2_start_pos < -0.3f) {
+        task2_start_pos = exp_ball_pos;
     }
-    exp_ball_pos=-0.05f;
+
+    exp_ball_pos=task2_start_pos;
+
+    Task2RunCubicSegment(task2_start_pos,0.06, 1.0f);
+    Task2RunCubicSegment(exp_ball_pos, -0.053, 3.0f);
 
     while(!force_exit)  //等待强制退出信号
     {
@@ -538,6 +588,7 @@ void Task2(void* parma)
     k230_cmd=0;
     //清理现场
     task_running=false;
+    force_exit=false;
     vTaskDelete(NULL);
     while(1){vTaskDelay(1000);}
 }
@@ -550,31 +601,36 @@ float task3_pos_kp=10.0f;
 void Task3(void* param)
 {
     TickType_t task3_start_time;
+    TickType_t last_wake_time;
 
     k230_cmd=1;
     task_running=true;
     exp_ball_pos=0.0f;
-    enable_ball_pos_control=true;
-    QuinticGenerate(&task3_quintic, sum_distance, sum_distance+1.7f, 0.1f, 7.5f);
-    task3_start_time=xTaskGetTickCount();
+    enable_ball_pos_control=false;
+    car_is_stop=true;
+    QuinticGenerate(&task3_quintic, sum_distance, sum_distance+1.7f, 0.1f, 7.0f);
     vTaskDelay(pdMS_TO_TICKS(1000));
+    task3_start_time=xTaskGetTickCount();
+    last_wake_time=task3_start_time;
     enable_line_track=true;
 
-    bool trajectory_running=true;
-    while(trajectory_running)
+    bool trajectory_finished=false;
+    while(!trajectory_finished && !force_exit)
     {
-        float time=(xTaskGetTickCount()-task3_start_time)*0.001f;
-        trajectory_running=QuinticSample(time, &task3_exp_pos, &task3_exp_vel, &task3_exp_acc, &task3_quintic);
+        float time=(xTaskGetTickCount()-task3_start_time)*portTICK_PERIOD_MS*0.001f;
+        trajectory_finished=QuinticSample(time, &task3_exp_pos, &task3_exp_vel, &task3_exp_acc, &task3_quintic);
         acc_feedforward=task3_exp_acc;
         line_trace_exp_vel=task3_exp_vel+task3_pos_kp*(task3_exp_pos-sum_distance);   //求循迹速度
-        vTaskDelay(20);
+        vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(20));
     }
     
     enable_line_track=false;
     enable_ball_pos_control=false;
+    current_task_id=0;
 
     k230_cmd=0;
     task_running=false;
+    force_exit=false;
     vTaskDelete(NULL);
     while(1){vTaskDelay(1000);}
 }
@@ -592,7 +648,7 @@ void TestTask(void* param)
     {
         
         
-        exp_ball_pos=test_ball_exp_pos;
+        //exp_ball_pos=test_ball_exp_pos;
         vTaskDelay(50);
     }
 }
