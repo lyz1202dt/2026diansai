@@ -38,6 +38,8 @@ extern float cur_robot_pos_x, cur_robot_pos_y;
 extern float cur_robot_yaw, odom_yaw_offset;
 extern float mpu6050_yaw;
 extern float sum_distance;
+extern bool enable_ball_pos_control;
+extern float kBallDistanceOffset;
 
 uint8_t k230_cmd=0;
 
@@ -47,6 +49,7 @@ int current_select_task_id=0;
 
 bool task_running=false;
 bool force_exit=false;
+bool ball_test=false;
 
 //拉起所有任务，UI功能
 int app_main() {
@@ -80,14 +83,21 @@ int app_main() {
       //enable_line_track=0;
       current_task_id=current_select_task_id;
     }
-    // else if(!DL_GPIO_readPins(KEY3_PORT, KEY3_K3_PIN))   //里程计复位(APP使用了)
-    // {
+    else if(!DL_GPIO_readPins(KEY3_PORT, KEY3_K3_PIN))   //平衡测试
+    {
     //   OLED_Printf(90, 0, 8, "k3-3");
     //   cur_robot_pos_x=0.0f;
     //   cur_robot_pos_y=0.0f;
     //   cur_robot_yaw=0.0f;
     //   odom_yaw_offset=mpu6050_yaw;
-    // }
+    if(!ball_test)         //翻转球平衡测试
+    {
+        ball_test=true;
+        enable_ball_pos_control=true;
+        
+    }
+        
+    }
     else if(!DL_GPIO_readPins(KEY5_PORT, KEY5_K_UP_PIN)) //第一题
     {
       OLED_Printf(80, 0, 8, "task1");
@@ -125,6 +135,16 @@ int app_main() {
 
 
 
+    if(ball_test)
+    {
+        if(!DL_GPIO_readPins(KEY5_PORT, KEY5_K_UP_PIN))
+            kBallDistanceOffset+=0.002f;
+        else if(!DL_GPIO_readPins(KEY5_PORT, KEY5_K_DOWN_PIN))
+            kBallDistanceOffset-=0.002f;
+        else if(!DL_GPIO_readPins(KEY5_PORT, KEY5_K_MAIN_PIN))
+            ball_test=false;
+    }
+    else {
     if(current_task_id==1&&task_running==false)      //当前是第一题
     {
         force_exit=false;
@@ -154,6 +174,7 @@ int app_main() {
         force_exit=false;
         task_running=true;
         xTaskCreate(Task5, "task5", 512, NULL, 2, &task_x_handle);
+    }
     }
     
     SerialTransmit(g_serial, &k230_cmd, 1);         //更新K230状态

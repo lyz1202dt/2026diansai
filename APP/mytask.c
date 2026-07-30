@@ -4,6 +4,7 @@
 #include "portmacro.h"
 #include "projdefs.h"
 #include "ti/devices/msp/m0p/mspm0g350x.h"
+#include "ti/driverlib/dl_gpio.h"
 #include "ti_msp_dl_config.h"
 #include <FreeRTOS.h>
 #include <math.h>
@@ -625,6 +626,23 @@ void Task3(void* param)
     exp_ball_pos=0.0f;
     enable_ball_pos_control=true;
     car_is_stop=false;
+
+    DL_GPIO_setPins(LED_RGB_PORT, LED_RGB_LED_R_PIN);
+    DL_GPIO_clearPins(LED_RGB_PORT,LED_RGB_LED_G_PIN);
+    DL_GPIO_clearPins(LED_RGB_PORT,LED_RGB_LED_B_PIN);
+
+    while(DL_GPIO_readPins(KEY3_PORT, KEY3_K3_PIN))
+    {
+      vTaskDelay(pdMS_TO_TICKS(50));    //等待直到按键按下，表示将当前钢球的位置设为期望它在运行时处于的位置
+    }
+    while(!DL_GPIO_readPins(KEY3_PORT, KEY3_K3_PIN))
+    {
+      vTaskDelay(pdMS_TO_TICKS(50));    //等待按键松开
+    }
+    DL_GPIO_clearPins(LED_RGB_PORT, LED_RGB_LED_R_PIN);
+    DL_GPIO_setPins(LED_RGB_PORT,LED_RGB_LED_G_PIN);
+    DL_GPIO_clearPins(LED_RGB_PORT,LED_RGB_LED_B_PIN);
+
     QuinticGenerate(&task3_quintic, sum_distance, 0.0f, sum_distance+1.7f, 0.0f, 7.0f);
     float init_distance=sum_distance;
     vTaskDelay(pdMS_TO_TICKS(1000));
@@ -713,6 +731,9 @@ void Task4(void* param)
     line_trace_exp_omega=0.0f;
     car_is_stop=false;
     
+    DL_GPIO_setPins(LED_RGB_PORT, LED_RGB_LED_R_PIN);
+    DL_GPIO_clearPins(LED_RGB_PORT,LED_RGB_LED_G_PIN);
+    DL_GPIO_clearPins(LED_RGB_PORT,LED_RGB_LED_B_PIN);
     while(DL_GPIO_readPins(KEY3_PORT, KEY3_K3_PIN))    //等待直到按键按下，表示开始执行
     {
       vTaskDelay(pdMS_TO_TICKS(50));
@@ -721,6 +742,9 @@ void Task4(void* param)
     {
       vTaskDelay(pdMS_TO_TICKS(50));
     }
+    DL_GPIO_clearPins(LED_RGB_PORT, LED_RGB_LED_R_PIN);
+    DL_GPIO_setPins(LED_RGB_PORT,LED_RGB_LED_G_PIN);
+    DL_GPIO_clearPins(LED_RGB_PORT,LED_RGB_LED_B_PIN);
     vTaskDelay(pdMS_TO_TICKS(300));
     
     float init_distance=sum_distance;
@@ -901,6 +925,10 @@ void Task5(void* param)
     {
       vTaskDelay(pdMS_TO_TICKS(50));    //等待直到按键按下，表示将当前钢球的位置设为期望它在运行时处于的位置
     }
+
+    DL_GPIO_setPins(LED_RGB_PORT, LED_RGB_LED_R_PIN);
+    DL_GPIO_clearPins(LED_RGB_PORT,LED_RGB_LED_G_PIN);
+    DL_GPIO_clearPins(LED_RGB_PORT,LED_RGB_LED_B_PIN);
     while(!DL_GPIO_readPins(KEY3_PORT, KEY3_K3_PIN))
     {
       vTaskDelay(pdMS_TO_TICKS(50));    //等待按键松开
@@ -913,6 +941,10 @@ void Task5(void* param)
       vTaskDelay(pdMS_TO_TICKS(100));
     }
 
+    DL_GPIO_clearPins(LED_RGB_PORT, LED_RGB_LED_R_PIN);
+    DL_GPIO_clearPins(LED_RGB_PORT,LED_RGB_LED_G_PIN);
+    DL_GPIO_setPins(LED_RGB_PORT,LED_RGB_LED_B_PIN);
+
     exp_ball_pos=average_pos;
     enable_ball_pos_control=true;
     while(DL_GPIO_readPins(KEY3_PORT, KEY3_K3_PIN))    //等待直到按键按下，表示开始执行
@@ -923,6 +955,11 @@ void Task5(void* param)
     {
       vTaskDelay(pdMS_TO_TICKS(50));
     }
+
+    DL_GPIO_clearPins(LED_RGB_PORT, LED_RGB_LED_R_PIN);
+    DL_GPIO_setPins(LED_RGB_PORT,LED_RGB_LED_G_PIN);
+    DL_GPIO_clearPins(LED_RGB_PORT,LED_RGB_LED_B_PIN);
+
     vTaskDelay(pdMS_TO_TICKS(300));
     
     float init_distance=sum_distance;
