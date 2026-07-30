@@ -671,7 +671,6 @@ void Task3(void* param)
 #define TASK4_ARC_DIRECTION (1.0f)    //方向待测
 #define TASK4_ARC_PERIOD_MS 20U
 #define TASK4_ARC_OMEGA_RAMP_TIME_S 0.5f
-#define TASK4_LINE_MIN_VEL_MPS 0.05f
 #define TASK4_STOP_LINE_VEL_MPS 0.15f
 #define TASK4_FINAL_STOP_DISTANCE_M 0.3f
 
@@ -752,14 +751,10 @@ void Task4(void* param)
         while(!trajectory_finished && !force_exit)
         {
             float time=(xTaskGetTickCount()-start_time)*portTICK_PERIOD_MS*0.001f;
-            float exp_vel;
 
             trajectory_finished=QuinticSample(time, &task3_exp_pos, &task3_exp_vel, &task3_exp_acc, &task3_quintic);
             acc_feedforward=task3_exp_acc;
-            exp_vel=task3_exp_vel+task3_pos_kp*(task3_exp_pos-sum_distance);   //求循迹速度
-            if(!trajectory_finished && (sum_distance-init_distance)>=0.1f && exp_vel<TASK4_LINE_MIN_VEL_MPS)
-              exp_vel=TASK4_LINE_MIN_VEL_MPS;
-            line_trace_exp_vel=exp_vel;
+            line_trace_exp_vel=task3_exp_vel+task3_pos_kp*(task3_exp_pos-sum_distance);   //求循迹速度
 
             if(sum_distance- init_distance<0.1f)
               ignore_line_sensor=true;
@@ -811,14 +806,10 @@ void Task4(void* param)
         while(!trajectory_finished && !force_exit)
         {
             float time=(xTaskGetTickCount()-start_time)*portTICK_PERIOD_MS*0.001f;
-            float exp_vel;
 
             trajectory_finished=QuinticSample(time, &task3_exp_pos, &task3_exp_vel, &task3_exp_acc, &task3_quintic);
             acc_feedforward=task3_exp_acc;
-            exp_vel=task3_exp_vel+task3_pos_kp*(task3_exp_pos-sum_distance);   //求循迹速度
-            if(!trajectory_finished && exp_vel<TASK4_LINE_MIN_VEL_MPS)
-              exp_vel=TASK4_LINE_MIN_VEL_MPS;
-            line_trace_exp_vel=exp_vel;
+            line_trace_exp_vel=task3_exp_vel+task3_pos_kp*(task3_exp_pos-sum_distance);   //求循迹速度
             vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(20));
         }
 
@@ -967,14 +958,10 @@ void Task5(void* param)
         while(!trajectory_finished && !force_exit)
         {
             float time=(xTaskGetTickCount()-start_time)*portTICK_PERIOD_MS*0.001f;
-            float exp_vel;
 
             trajectory_finished=QuinticSample(time, &task3_exp_pos, &task3_exp_vel, &task3_exp_acc, &task3_quintic);
             acc_feedforward=task3_exp_acc;
-            exp_vel=task3_exp_vel+task3_pos_kp*(task3_exp_pos-sum_distance);   //求循迹速度
-            if(!trajectory_finished && exp_vel<TASK4_LINE_MIN_VEL_MPS)
-              exp_vel=TASK4_LINE_MIN_VEL_MPS;
-            line_trace_exp_vel=exp_vel;
+            line_trace_exp_vel=task3_exp_vel+task3_pos_kp*(task3_exp_pos-sum_distance);   //求循迹速度
 
             if(sum_distance- init_distance<0.1f)
               ignore_line_sensor=true;
@@ -1026,14 +1013,10 @@ void Task5(void* param)
         while(!trajectory_finished && !force_exit)
         {
             float time=(xTaskGetTickCount()-start_time)*portTICK_PERIOD_MS*0.001f;
-            float exp_vel;
 
             trajectory_finished=QuinticSample(time, &task3_exp_pos, &task3_exp_vel, &task3_exp_acc, &task3_quintic);
             acc_feedforward=task3_exp_acc;
-            exp_vel=task3_exp_vel+task3_pos_kp*(task3_exp_pos-sum_distance);   //求循迹速度
-            if(!trajectory_finished && exp_vel<TASK4_LINE_MIN_VEL_MPS)
-              exp_vel=TASK4_LINE_MIN_VEL_MPS;
-            line_trace_exp_vel=exp_vel;
+            line_trace_exp_vel=task3_exp_vel+task3_pos_kp*(task3_exp_pos-sum_distance);   //求循迹速度
             vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(20));
         }
 
