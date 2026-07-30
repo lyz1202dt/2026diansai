@@ -444,7 +444,7 @@ static uint16_t K230CommResync(uint8_t *buffer)
 
 TickType_t last_ball_pos_update_time=0;
 
-PID ball_pos_pid={.Kp=6.0f,.Kd=1.0f,.Ki=0.0f,.limit=5.0f,.output_limit=0.05f};
+PID ball_pos_pid={.Kp=6.0f,.Kd=1.0f,.Ki=0.0f,.limit=5.0f,.output_limit=0.12f};
 PID ball_vel_pid={.Kp=45.0f,.Kd=0.0f,.Ki=2.0f,.limit=5.0f,.output_limit=6.0f};
 
 void k230_pack_parse(uint8_t *src)
@@ -739,7 +739,7 @@ void Task4(void* param)
         bool trajectory_finished=false;
 
         QuinticGenerate(&task3_quintic, sum_distance, 0.0f, sum_distance+1.6f,
-                        TASK4_CRUISE_VEL_MPS, 5.3f);
+                        TASK4_CRUISE_VEL_MPS, 8.3f);
         start_time=xTaskGetTickCount();
         last_wake_time=start_time;
         line_trace_exp_vel=0.0f;
@@ -899,32 +899,24 @@ void Task5(void* param)
     line_trace_exp_omega=0.0f;
     car_is_stop=false;
     
+    DL_GPIO_setPins(LED_RGB_PORT, LED_RGB_LED_R_PIN);
+    DL_GPIO_clearPins(LED_RGB_PORT,LED_RGB_LED_G_PIN);
+    DL_GPIO_clearPins(LED_RGB_PORT,LED_RGB_LED_B_PIN);
 
     while(DL_GPIO_readPins(KEY3_PORT, KEY3_K3_PIN))
     {
       vTaskDelay(pdMS_TO_TICKS(50));    //等待直到按键按下，表示将当前钢球的位置设为期望它在运行时处于的位置
     }
-
-    DL_GPIO_setPins(LED_RGB_PORT, LED_RGB_LED_R_PIN);
-    DL_GPIO_clearPins(LED_RGB_PORT,LED_RGB_LED_G_PIN);
-    DL_GPIO_clearPins(LED_RGB_PORT,LED_RGB_LED_B_PIN);
     while(!DL_GPIO_readPins(KEY3_PORT, KEY3_K3_PIN))
     {
       vTaskDelay(pdMS_TO_TICKS(50));    //等待按键松开
-    }
-    
-    float average_pos=0.0f;
-    for(int i=0;i<8;i++)
-    {
-      average_pos+=ball_filter.position/8.0f;
-      vTaskDelay(pdMS_TO_TICKS(100));
     }
 
     DL_GPIO_clearPins(LED_RGB_PORT, LED_RGB_LED_R_PIN);
     DL_GPIO_clearPins(LED_RGB_PORT,LED_RGB_LED_G_PIN);
     DL_GPIO_setPins(LED_RGB_PORT,LED_RGB_LED_B_PIN);
 
-    exp_ball_pos=average_pos;
+    exp_ball_pos=ball_filter.position;
     enable_ball_pos_control=true;
     while(DL_GPIO_readPins(KEY3_PORT, KEY3_K3_PIN))    //等待直到按键按下，表示开始执行
     {
@@ -949,7 +941,7 @@ void Task5(void* param)
         bool trajectory_finished=false;
 
         QuinticGenerate(&task3_quintic, sum_distance, 0.0f, sum_distance+1.6f,
-                        TASK4_CRUISE_VEL_MPS, 5.3f);
+                        TASK4_CRUISE_VEL_MPS, 8.3f);
         start_time=xTaskGetTickCount();
         last_wake_time=start_time;
         line_trace_exp_omega=0.0f;
