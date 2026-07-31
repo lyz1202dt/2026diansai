@@ -262,7 +262,7 @@ float kBallDistanceOffset=-0.003f;
 #define STICK_LENGTH    0.25f
 #define PIXEL2POSITION(x) ((x)*0.01f+kBallDistanceOffset)   //换算成国际单位
 #define BALL_POS_TO_CENTER_DIS(x) ((-x)+0.11f)
-#define MOTOR_EXP_POS_MAX_STEP_DEG 3.0f
+float max_motor_step_angle=4.0f;
 
 float motor_base_angle_offset=-1.0f;    //注意：单位是度
 
@@ -315,10 +315,10 @@ static float limit_motor_exp_pos_step(float target_pos)
 {
     float delta = target_pos - motor_exp_pos;
 
-    if (delta > MOTOR_EXP_POS_MAX_STEP_DEG) {
-        return motor_exp_pos + MOTOR_EXP_POS_MAX_STEP_DEG;
-    } else if (delta < -MOTOR_EXP_POS_MAX_STEP_DEG) {
-        return motor_exp_pos - MOTOR_EXP_POS_MAX_STEP_DEG;
+    if (delta > max_motor_step_angle) {
+        return motor_exp_pos + max_motor_step_angle;
+    } else if (delta < -max_motor_step_angle) {
+        return motor_exp_pos - max_motor_step_angle;
     }
 
     return target_pos;
@@ -408,7 +408,6 @@ volatile uint32_t k230_comm_check_err_cnt;
 volatile uint32_t k230_comm_timeout_cnt;
 
 float raw_position,filtered_position;
-float raw_acc;
 
 static uint8_t K230CommCalcCheck(const uint8_t *buffer)
 {
@@ -442,31 +441,28 @@ static uint16_t K230CommResync(uint8_t *buffer)
 
 TickType_t last_ball_pos_update_time=0;
 
-//float debug_q=10.0f,debug_r=0.0001f;
+float debug_q=8.0f,debug_r=0.003f;
 
-PID ball_pos_pid={.Kp=5.0f,.Kd=0.0f,.Ki=0.0f,.limit=5.0f,.output_limit=0.12f};
+PID ball_pos_pid={.Kp=4.0f,.Kd=0.0f,.Ki=0.0f,.limit=5.0f,.output_limit=0.07f};
 PID ball_vel_pid={.Kp=45.0f,.Kd=0.0f,.Ki=1.0f,.limit=10.0f,.output_limit=6.0f};
 
-float ball_pid_output_filter_gate=0.0f;   //0.8f
+float ball_pid_output_filter_gate=0.5f;
 
 void k230_pack_parse(uint8_t *src)
 {
     RecvPack recv_pack;
     memcpy(&recv_pack, src, sizeof(k230_comm_recv_pack));
     raw_position=PIXEL2POSITION(recv_pack.position);
-
-    stick_current_angle=motor_angle_to_stick_angle(joint_cur_pos);  //求解棍子角度，计算加速度作为滤波器输入
-    raw_acc=sinf(ANGLE2RAD(stick_current_angle))*9.8f;
     
     float dt=(xTaskGetTickCount()-last_ball_pos_update_time)*0.001f;
     if(dt>0.08f)    //最多容忍两次丢帧，防止时间过大导致滤波器崩溃
         dt=0.08f;
     last_ball_pos_update_time=xTaskGetTickCount();
 
-    //Kalman1D_SetNoise(&ball_filter, debug_q, debug_r);  //Debug
+    Kalman1D_SetNoise(&ball_filter, debug_q, debug_r);  //Debug
     
     if(raw_position<0.3f&&raw_position>-0.3f)   //数值合理才送到卡尔曼
-      Kalman1D_Update(&ball_filter,raw_position , raw_acc, dt);
+      Kalman1D_Update(&ball_filter,raw_position, dt);
 
     
     if(enable_ball_pos_control)
@@ -475,7 +471,8 @@ void k230_pack_parse(uint8_t *src)
         PID_Control(ball_filter.velocity,ball_pos_pid.pid_out, &ball_vel_pid);
         float target_motor_exp_pos=stick_angle_to_motor_angle(stick_angle_feedforward+ball_vel_pid.pid_out);
         //motor_exp_pos=ball_pid_output_filter_gate*motor_exp_pos+(1.0f-ball_pid_output_filter_gate)*target_motor_exp_pos;//limit_motor_exp_pos_step();
-        motor_exp_pos=ball_pid_output_filter_gate*motor_exp_pos+(1.0f-ball_pid_output_filter_gate)*target_motor_exp_pos;
+        float filtered_motor_exp_pos=ball_pid_output_filter_gate*motor_exp_pos+(1.0f-ball_pid_output_filter_gate)*target_motor_exp_pos;
+        motor_exp_pos=limit_motor_exp_pos_step(filtered_motor_exp_pos);
     }
 
 

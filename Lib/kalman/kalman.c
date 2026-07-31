@@ -36,10 +36,8 @@ void Kalman1D_SetNoise(Kalman1D *filter, float q, float r) {
     filter->r = Kalman1D_LimitPositive(r);
 }
 
-void Kalman1D_Update(Kalman1D *filter, float measured_position, float acceleration, float dt) {
+void Kalman1D_Update(Kalman1D *filter, float measured_position, float dt) {
     float dt2;
-    float dt3;
-    float dt4;
     float predicted_position;
     float predicted_velocity;
     float p00;
@@ -56,17 +54,15 @@ void Kalman1D_Update(Kalman1D *filter, float measured_position, float accelerati
     }
 
     dt2 = dt * dt;
-    dt3 = dt2 * dt;
-    dt4 = dt2 * dt2;
 
-    predicted_position = filter->position + filter->velocity * dt + 0.5f * acceleration * dt2;
-    predicted_velocity = filter->velocity + acceleration * dt;
+    predicted_position = filter->position + filter->velocity * dt;
+    predicted_velocity = filter->velocity;
 
     p00 = filter->p[0][0] + dt * (filter->p[1][0] + filter->p[0][1]) + dt2 * filter->p[1][1] +
-          0.25f * filter->q * dt4;
-    p01 = filter->p[0][1] + dt * filter->p[1][1] + 0.5f * filter->q * dt3;
-    p10 = filter->p[1][0] + dt * filter->p[1][1] + 0.5f * filter->q * dt3;
-    p11 = filter->p[1][1] + filter->q * dt2;
+          filter->q * dt2;
+    p01 = filter->p[0][1] + dt * filter->p[1][1];
+    p10 = filter->p[1][0] + dt * filter->p[1][1];
+    p11 = filter->p[1][1] + filter->q;
 
     innovation = measured_position - predicted_position;
     innovation_covariance = Kalman1D_LimitPositive(p00 + filter->r);

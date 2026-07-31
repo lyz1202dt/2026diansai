@@ -211,10 +211,8 @@ flowchart TD
 
 1. 将字节流复制为 `RecvPack`。
 2. 使用 `PIXEL2POSITION(x)` 将视觉像素位置转换为物理位置。
-3. 由当前关节角 `joint_cur_pos` 反解棍子角度 `stick_cur_angle`。
-4. 用 `sin(stick_cur_angle) * 9.8` 估算小球沿杆方向加速度。
-5. 根据两次视觉更新间隔计算 `dt`，并限制最大值。
-6. 调用 `Kalman1D_Update(&filter, raw_position, raw_acc, dt)` 融合视觉位置和模型加速度。
+3. 根据两次视觉更新间隔计算 `dt`，并限制最大值。
+4. 调用 `Kalman1D_Update(&filter, raw_position, dt)` 使用视觉位置更新滤波器。
 
 ## 7. ZDT 关节电机与钢球位置闭环
 
