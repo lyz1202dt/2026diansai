@@ -253,7 +253,7 @@ uint8_t zdt_recv_buf[32];
 uint8_t zdt_recv_cnt;
 float joint_cur_pos;
 
-float kBallDistanceOffset=-0.003f;
+float kBallDistanceOffset=-0.006f;
 
 #define RAD2ANGLE(x) ((x)*180.0f/3.14159265f)
 #define ANGLE2RAD(x) ((x)*3.14159265f/180.0f)
@@ -583,12 +583,12 @@ void Task2(void* parma)
     vTaskDelay(pdMS_TO_TICKS(100));
 
     //Task2RunCubicSegment(ball_filter.position,0.057, 1.0f);
-    exp_ball_pos=0.06f;
-    while(ball_filter.position-0.045<-0.007f)
+    exp_ball_pos=-0.06f;
+    while(ball_filter.position>-0.049f)
     {
       vTaskDelay(pdMS_TO_TICKS(50));
     }
-    exp_ball_pos= -0.045;
+    exp_ball_pos= 0.045;
 
     while(!force_exit)  //等待强制退出信号
     {

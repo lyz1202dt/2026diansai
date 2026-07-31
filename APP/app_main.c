@@ -92,6 +92,7 @@ int app_main() {
     //   odom_yaw_offset=mpu6050_yaw;
     if(!ball_test)         //翻转球平衡测试
     {
+        k230_cmd=1;
         ball_test=true;
         enable_ball_pos_control=true;
         
