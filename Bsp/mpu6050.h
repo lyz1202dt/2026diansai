@@ -46,7 +46,7 @@ extern short gyro[3], accel[3];
 extern float pitch, roll, yaw;
 
 void MPU6050_Init(void);
-int read_imu(float *q, float *gyro_dps);
+int read_imu(float *q, float *gyro_dps, float *accel_g);
 int read_quad(float *q);
 void get_euler_angles(const float *q,float *roll,float *pitch,float *yaw);
 

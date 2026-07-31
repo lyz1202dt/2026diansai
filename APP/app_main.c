@@ -17,6 +17,7 @@
 #include "Bsp/mpu6050.h"
 #include "Driver/uart/uart.h"
 #include "Lib/pid/PID.h"
+#include "Lib/kalman/kalman.h"
 #include <ti/driverlib/dl_dma.h>
 
 #include "config.h"
@@ -40,6 +41,7 @@ extern float mpu6050_yaw;
 extern float sum_distance;
 extern bool enable_ball_pos_control;
 extern float kBallDistanceOffset;
+extern Kalman1D ball_filter;
 
 uint8_t k230_cmd=0;
 
@@ -128,7 +130,7 @@ int app_main() {
       OLED_Printf(80, 0, 8, "     ");
     }
     //OLED
-    OLED_Printf(0, 40, 8, "pos=(%.3f,%.3f)   ", cur_robot_pos_x,cur_robot_pos_y);
+    OLED_Printf(0, 40, 8, "ball_pos=%.3f   ", ball_filter.position);
     OLED_Printf(0, 50, 8, "yaw=%.2f   ", cur_robot_yaw);
     OLED_Printf(0, 60, 8, "s=%.3f   ",sum_distance);
     OLED_Printf(0, 0, 16, "oled");
