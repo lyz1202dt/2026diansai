@@ -542,6 +542,8 @@ void K230RecvTask(void* param)
 }
 
 
+float ball_pos_offset=0.0f;
+
 
 float task1_finished_gate_distance=5.7f;
 float task1_distance_offset;
@@ -576,7 +578,7 @@ void Task1(void* parma)
     }
 
     enable_line_track=false;
-    OLED_Printf(0, 30, 16, "time=%dms", xTaskGetTickCount()-task1_start_time);
+    OLED_Printf(0, 0, 16, "time=%dms", xTaskGetTickCount()-task1_start_time);
 
     //清理现场
     force_exit=false;
@@ -596,15 +598,21 @@ void Task2(void* parma)
     enable_line_track=false;
     force_exit=false;
     enable_ball_pos_control=true;
-    vTaskDelay(pdMS_TO_TICKS(100));
-
-    //Task2RunCubicSegment(ball_filter.position,0.057, 1.0f);
-    exp_ball_pos=-0.06f;
-    while(ball_filter.position>-0.049f)
+    while(DL_GPIO_readPins(KEY3_PORT, KEY3_K3_PIN))    //等待直到按键按下，表示将当前钢球的位置设为期望它在运行时处于的位置
+    {
+        if(!DL_GPIO_readPins(KEY5_PORT, KEY5_K_UP_PIN))
+            ball_pos_offset+=0.00005f;
+        else if(!DL_GPIO_readPins(KEY5_PORT, KEY5_K_DOWN_PIN))
+            ball_pos_offset-=0.00005f;
+        exp_ball_pos=ball_pos_offset;
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    exp_ball_pos=-0.05f+ball_pos_offset;
+    while(ball_filter.position>-0.042f+ball_pos_offset)
     {
       vTaskDelay(pdMS_TO_TICKS(50));
     }
-    exp_ball_pos= 0.045;
+    exp_ball_pos= 0.045f+ball_pos_offset;
 
     while(!force_exit)  //等待强制退出信号
     {
@@ -639,9 +647,14 @@ void Task3(void* param)
     DL_GPIO_clearPins(LED_RGB_PORT,LED_RGB_LED_G_PIN);
     DL_GPIO_clearPins(LED_RGB_PORT,LED_RGB_LED_B_PIN);
 
-    while(DL_GPIO_readPins(KEY3_PORT, KEY3_K3_PIN))
+    while(DL_GPIO_readPins(KEY3_PORT, KEY3_K3_PIN))    //等待直到按键按下，表示将当前钢球的位置设为期望它在运行时处于的位置
     {
-      vTaskDelay(pdMS_TO_TICKS(50));    //等待直到按键按下，表示将当前钢球的位置设为期望它在运行时处于的位置
+        if(!DL_GPIO_readPins(KEY5_PORT, KEY5_K_UP_PIN))
+            ball_pos_offset+=0.00001f;
+        else if(!DL_GPIO_readPins(KEY5_PORT, KEY5_K_DOWN_PIN))
+            ball_pos_offset-=0.00001f;
+        exp_ball_pos=ball_pos_offset;
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
     while(!DL_GPIO_readPins(KEY3_PORT, KEY3_K3_PIN))
     {
@@ -653,7 +666,6 @@ void Task3(void* param)
 
     QuinticGenerate(&task3_quintic, sum_distance, 0.0f, sum_distance+1.7f, 0.0f, 7.0f);
     float init_distance=sum_distance;
-    vTaskDelay(pdMS_TO_TICKS(1000));
     task3_start_time=xTaskGetTickCount();
     last_wake_time=task3_start_time;
     enable_line_track=true;
@@ -743,6 +755,11 @@ void Task4(void* param)
     DL_GPIO_clearPins(LED_RGB_PORT,LED_RGB_LED_B_PIN);
     while(DL_GPIO_readPins(KEY3_PORT, KEY3_K3_PIN))    //等待直到按键按下，表示开始执行
     {
+        if(!DL_GPIO_readPins(KEY5_PORT, KEY5_K_UP_PIN))
+            ball_pos_offset+=0.00001f;
+        else if(!DL_GPIO_readPins(KEY5_PORT, KEY5_K_DOWN_PIN))
+            ball_pos_offset-=0.00001f;
+        exp_ball_pos=ball_pos_offset;
       vTaskDelay(pdMS_TO_TICKS(50));
     }
     while(!DL_GPIO_readPins(KEY3_PORT, KEY3_K3_PIN))    //等待按键松开
@@ -928,6 +945,11 @@ void Task5(void* param)
 
     while(DL_GPIO_readPins(KEY3_PORT, KEY3_K3_PIN))
     {
+        if(!DL_GPIO_readPins(KEY5_PORT, KEY5_K_UP_PIN))
+            ball_pos_offset+=0.00001f;
+        else if(!DL_GPIO_readPins(KEY5_PORT, KEY5_K_DOWN_PIN))
+            ball_pos_offset-=0.00001f;
+        exp_ball_pos=ball_pos_offset;
       vTaskDelay(pdMS_TO_TICKS(50));    //等待直到按键按下，表示将当前钢球的位置设为期望它在运行时处于的位置
     }
     while(!DL_GPIO_readPins(KEY3_PORT, KEY3_K3_PIN))
